@@ -22,9 +22,9 @@ func TestGoClientExample(t *testing.T) {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(joytoken.ModelListResponse{
 				Object: "list",
-				Data: []joytoken.ModelInfo{
-					{ID: "joy/mock", Name: "Joy Mock"},
-				},
+				Data: joytoken.ModelListData{Models: []joytoken.ModelInfo{
+					{ModelID: "auto", ModelKey: "auto", DisplayName: "auto", Alias: "auto"},
+				}},
 			})
 		case r.Method == http.MethodPost && r.URL.Path == "/openai/v1/chat/completions":
 			w.Header().Set("Content-Type", "application/json")
@@ -51,12 +51,12 @@ func TestGoClientExample(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListModels returned error: %v", err)
 	}
-	if got := models.Data[0].ID; got != "joy/mock" {
-		t.Fatalf("expected joy/mock, got %s", got)
+	if got := models.Data.Models[0].ModelID; got != "auto" {
+		t.Fatalf("expected auto, got %s", got)
 	}
 
 	completion, err := client.CreateChatCompletion(context.Background(), joytoken.ChatCompletionRequest{
-		Model: "joy/mock",
+		Model: joytoken.ModelAuto,
 		Messages: []joytoken.ChatMessage{
 			{Role: "user", Content: "ping"},
 		},

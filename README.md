@@ -18,7 +18,7 @@ client := joytoken.NewClient(
 )
 
 completion, err := client.CreateChatCompletion(ctx, joytoken.ChatCompletionRequest{
-    Model: "auto",
+    Model: joytoken.ModelAuto,
     Messages: []joytoken.ChatMessage{
         {Role: "user", Content: "Say hello"},
     },
@@ -29,7 +29,7 @@ OpenAI Responses:
 
 ```go
 response, err := client.CreateResponse(ctx, joytoken.ResponseRequest{
-    Model: "auto",
+    Model: joytoken.ModelAuto,
     Input: "Say hello",
 })
 if err != nil {
@@ -42,7 +42,7 @@ OpenAI Images:
 
 ```go
 image, err := client.GenerateImage(ctx, joytoken.ImageGenerationRequest{
-    Model:  "auto",
+    Model:  joytoken.ModelAuto,
     Prompt: "A neon JoyToken logo on a black background",
     Size:   "1024x1024",
 })
@@ -56,7 +56,7 @@ Anthropic Messages:
 
 ```go
 message, err := client.CreateMessage(ctx, joytoken.MessageRequest{
-    Model:     "auto",
+    Model:     joytoken.ModelAuto,
     MaxTokens: 1024,
     Messages: []joytoken.MessageParam{
         {Role: "user", Content: "Say hello"},
@@ -76,6 +76,20 @@ The client supports:
 - `GET /api/v1/models`
 - `GET /api/v1/models/meta`
 - `GET /api/v1/pricing`
+
+All model requests require `joytoken.ModelAuto`; concrete model IDs are not accepted.
+
+Model descriptions can be localized with `ListModelsWithOptions`. `Locale`
+accepts `joytoken.ModelLocaleZH` or `joytoken.ModelLocaleEN`; when omitted, the
+API defaults to English.
+
+```go
+models, err := client.ListModelsWithOptions(ctx, joytoken.ListModelsOptions{
+    Locale: joytoken.ModelLocaleZH,
+})
+```
+
+The SDK preserves the API response envelope; catalog entries are available at `models.Data.Models`.
 
 The `agent` subpackage provides the same bounded tool-calling loop as the TypeScript Agent SDK:
 
@@ -113,7 +127,7 @@ Every run has a hard eight-step limit by default. Use `RunWithOptions` with `Max
 
 ```go
 stream, err := client.StreamChatCompletion(ctx, joytoken.ChatCompletionRequest{
-    Model: "auto",
+    Model: joytoken.ModelAuto,
     Messages: []joytoken.ChatMessage{{Role: "user", Content: "Say hello"}},
 })
 if err != nil {
@@ -155,7 +169,6 @@ go test ./...
 ```bash
 cd example
 export JOY_TOKEN_API_KEY="..."
-export JOY_TOKEN_MODEL="auto"
 go run ./live
 ```
 

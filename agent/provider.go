@@ -12,9 +12,8 @@ import (
 // NewJoyTokenProvider creates a ModelProvider backed by a JoyToken Client.
 func NewJoyTokenProvider(client *joytoken.Client, opts ...ProviderOption) *JoyTokenProvider {
 	provider := &JoyTokenProvider{
-		Client:       client,
-		DefaultModel: "auto",
-		Protocol:     OpenAIProtocol,
+		Client:   client,
+		Protocol: OpenAIProtocol,
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -29,13 +28,12 @@ func (p *JoyTokenProvider) Complete(ctx context.Context, request ModelRequest) (
 	if p == nil || p.Client == nil {
 		return ModelResponse{}, fmt.Errorf("joytoken provider client is required")
 	}
-	model := valueOrDefault(request.Model, valueOrDefault(p.DefaultModel, "auto"))
 	if p.Protocol == AnthropicProtocol {
-		return p.completeAnthropic(ctx, request, model)
+		return p.completeAnthropic(ctx, request)
 	}
 
 	response, err := p.Client.CreateChatCompletion(ctx, joytoken.ChatCompletionRequest{
-		Model:       model,
+		Model:       joytoken.ModelAuto,
 		Messages:    request.Messages,
 		Temperature: request.Temperature,
 		MaxTokens:   request.MaxTokens,
@@ -52,8 +50,8 @@ func (p *JoyTokenProvider) Complete(ctx context.Context, request ModelRequest) (
 	return ModelResponse{Message: response.Choices[0].Message, Usage: response.Usage, Raw: response}, nil
 }
 
-func (p *JoyTokenProvider) completeAnthropic(ctx context.Context, request ModelRequest, model string) (ModelResponse, error) {
-	response, err := p.Client.CreateMessage(ctx, toAnthropicRequest(request, model))
+func (p *JoyTokenProvider) completeAnthropic(ctx context.Context, request ModelRequest) (ModelResponse, error) {
+	response, err := p.Client.CreateMessage(ctx, toAnthropicRequest(request))
 	if err != nil {
 		return ModelResponse{}, err
 	}
@@ -64,7 +62,7 @@ func (p *JoyTokenProvider) completeAnthropic(ctx context.Context, request ModelR
 	}, nil
 }
 
-func toAnthropicRequest(request ModelRequest, model string) joytoken.MessageRequest {
+func toAnthropicRequest(request ModelRequest) joytoken.MessageRequest {
 	systemBlocks := make([]string, 0)
 	messages := make([]joytoken.MessageParam, 0, len(request.Messages))
 	for _, message := range request.Messages {
@@ -110,7 +108,7 @@ func toAnthropicRequest(request ModelRequest, model string) joytoken.MessageRequ
 		maxTokens = *request.MaxTokens
 	}
 	return joytoken.MessageRequest{
-		Model:       model,
+		Model:       joytoken.ModelAuto,
 		MaxTokens:   maxTokens,
 		Messages:    messages,
 		System:      joinSystemBlocks(systemBlocks),

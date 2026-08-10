@@ -68,7 +68,6 @@ func (a *Agent) RunWithOptions(ctx context.Context, runOptions AgentRunOptions) 
 		}
 
 		response, err := a.options.Model.Complete(ctx, ModelRequest{
-			Model:       valueOrDefault(a.options.ModelName, "auto"),
 			Messages:    messages,
 			Tools:       a.chatTools(),
 			Temperature: a.options.Temperature,

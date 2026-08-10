@@ -16,8 +16,6 @@ func main() {
 		log.Fatal("Set JOY_TOKEN_API_KEY before running the live JoyToken Go example.")
 	}
 
-	model := getenv("JOY_TOKEN_MODEL", "auto")
-
 	client := joytoken.NewClient(
 		joytoken.WithAPIKey(apiKey),
 	)
@@ -25,19 +23,19 @@ func main() {
 	ctx := context.Background()
 
 	fmt.Println("JoyToken live Go example")
-	fmt.Printf("Model: %s\n", model)
+	fmt.Printf("Model: %s\n", joytoken.ModelAuto)
 
 	models, err := client.ListModels(ctx)
 	if err != nil {
 		log.Fatalf("list models: %v", err)
 	}
-	fmt.Printf("Models returned: %d\n", len(models.Data))
-	if len(models.Data) > 0 {
-		fmt.Printf("First model: %s\n", models.Data[0].ID)
+	fmt.Printf("Models returned: %d\n", len(models.Data.Models))
+	if len(models.Data.Models) > 0 {
+		fmt.Printf("First model: %s\n", models.Data.Models[0].Alias)
 	}
 
 	completion, err := client.CreateChatCompletion(ctx, joytoken.ChatCompletionRequest{
-		Model: model,
+		Model: joytoken.ModelAuto,
 		Messages: []joytoken.ChatMessage{
 			{Role: "user", Content: "Reply with one short sentence confirming JoyToken is connected from Go."},
 		},
@@ -54,8 +52,7 @@ func main() {
 	fmt.Println(completion.Choices[0].Message.Content)
 
 	runner := agent.New(agent.AgentOptions{
-		ModelName: model,
-		Model:     agent.NewJoyTokenProvider(client, agent.WithDefaultModel(model)),
+		Model:     agent.NewJoyTokenProvider(client),
 		System:    "You are testing the JoyToken Agent SDK. Keep the answer short.",
 		MaxTokens: intPtr(80),
 	})
@@ -67,13 +64,6 @@ func main() {
 	fmt.Println("\nGo Agent SDK response:")
 	fmt.Println(result.FinalText)
 	fmt.Printf("Usage total tokens: %d\n", result.Usage.TotalTokens)
-}
-
-func getenv(key string, fallback string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
-	}
-	return fallback
 }
 
 func intPtr(value int) *int {

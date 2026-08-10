@@ -18,7 +18,7 @@ client := joytoken.NewClient(
 )
 
 completion, err := client.CreateChatCompletion(ctx, joytoken.ChatCompletionRequest{
-    Model: "auto",
+    Model: joytoken.ModelAuto,
     Messages: []joytoken.ChatMessage{
         {Role: "user", Content: "Say hello"},
     },
@@ -29,7 +29,7 @@ OpenAI Responses：
 
 ```go
 response, err := client.CreateResponse(ctx, joytoken.ResponseRequest{
-    Model: "auto",
+    Model: joytoken.ModelAuto,
     Input: "Say hello",
 })
 if err != nil {
@@ -42,7 +42,7 @@ OpenAI Images：
 
 ```go
 image, err := client.GenerateImage(ctx, joytoken.ImageGenerationRequest{
-    Model:  "auto",
+    Model:  joytoken.ModelAuto,
     Prompt: "A neon JoyToken logo on a black background",
     Size:   "1024x1024",
 })
@@ -56,7 +56,7 @@ Anthropic Messages：
 
 ```go
 message, err := client.CreateMessage(ctx, joytoken.MessageRequest{
-    Model:     "auto",
+    Model:     joytoken.ModelAuto,
     MaxTokens: 1024,
     Messages: []joytoken.MessageParam{
         {Role: "user", Content: "Say hello"},
@@ -76,6 +76,18 @@ message, err := client.CreateMessage(ctx, joytoken.MessageRequest{
 - `GET /api/v1/models`
 - `GET /api/v1/models/meta`
 - `GET /api/v1/pricing`
+
+所有模型请求都必须使用 `joytoken.ModelAuto`，不支持传入具体模型 ID。
+
+模型列表描述语言按请求设置，不是客户端全局配置。使用 `ListModelsWithOptions` 传入 `joytoken.ModelLocaleZH` 或 `joytoken.ModelLocaleEN`；不传 `Locale` 时接口默认返回英文描述。
+
+```go
+models, err := client.ListModelsWithOptions(ctx, joytoken.ListModelsOptions{
+    Locale: joytoken.ModelLocaleZH,
+})
+```
+
+SDK 保留接口原始响应层级，模型目录项位于 `models.Data.Models`。
 
 `agent` 子包提供与 TypeScript Agent SDK 一致的有界工具调用循环：
 
@@ -113,7 +125,7 @@ result, err := runner.Run(ctx, "Summarize record 42")
 
 ```go
 stream, err := client.StreamChatCompletion(ctx, joytoken.ChatCompletionRequest{
-    Model: "auto",
+    Model: joytoken.ModelAuto,
     Messages: []joytoken.ChatMessage{{Role: "user", Content: "Say hello"}},
 })
 if err != nil {
@@ -155,7 +167,6 @@ go test ./...
 ```bash
 cd example
 export JOY_TOKEN_API_KEY="..."
-export JOY_TOKEN_MODEL="auto"
 go run ./live
 ```
 

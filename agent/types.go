@@ -14,7 +14,6 @@ type ModelProvider interface {
 
 // ModelRequest is the provider-neutral request used by an agent loop.
 type ModelRequest struct {
-	Model       string
 	Messages    []joytoken.ChatMessage
 	Tools       []joytoken.ChatTool
 	Temperature *float64
@@ -48,7 +47,6 @@ type ToolExecutionContext struct {
 // AgentOptions configures an Agent.
 type AgentOptions struct {
 	Model       ModelProvider
-	ModelName   string
 	System      string
 	Tools       []AgentTool
 	StopWhen    []StopCondition
@@ -127,20 +125,12 @@ const (
 
 // JoyTokenProvider is a ModelProvider backed by the JoyToken client.
 type JoyTokenProvider struct {
-	Client       *joytoken.Client
-	DefaultModel string
-	Protocol     Protocol
+	Client   *joytoken.Client
+	Protocol Protocol
 }
 
 // ProviderOption configures a JoyTokenProvider.
 type ProviderOption func(*JoyTokenProvider)
-
-// WithDefaultModel configures the model used when a request omits one.
-func WithDefaultModel(model string) ProviderOption {
-	return func(provider *JoyTokenProvider) {
-		provider.DefaultModel = model
-	}
-}
 
 // WithProtocol configures the JoyToken wire protocol used by the provider.
 func WithProtocol(protocol Protocol) ProviderOption {

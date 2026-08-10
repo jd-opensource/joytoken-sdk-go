@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -126,6 +127,9 @@ func NewClient(opts ...Option) *Client {
 
 // CreateChatCompletion creates a non-streaming OpenAI-compatible completion.
 func (c *Client) CreateChatCompletion(ctx context.Context, request ChatCompletionRequest) (*ChatCompletionResponse, error) {
+	if err := validateAutoModel(request.Model); err != nil {
+		return nil, err
+	}
 	if err := c.requireAPIKey(); err != nil {
 		return nil, err
 	}
@@ -140,6 +144,9 @@ func (c *Client) CreateChatCompletion(ctx context.Context, request ChatCompletio
 // StreamChatCompletion starts a streaming OpenAI-compatible completion.
 // The caller must close the returned stream.
 func (c *Client) StreamChatCompletion(ctx context.Context, request ChatCompletionRequest) (*ChatCompletionStream, error) {
+	if err := validateAutoModel(request.Model); err != nil {
+		return nil, err
+	}
 	if err := c.requireAPIKey(); err != nil {
 		return nil, err
 	}
@@ -172,6 +179,9 @@ func (c *Client) StreamChatCompletion(ctx context.Context, request ChatCompletio
 
 // CreateResponse creates a non-streaming OpenAI-compatible Responses result.
 func (c *Client) CreateResponse(ctx context.Context, request ResponseRequest) (*Response, error) {
+	if err := validateAutoModel(request.Model); err != nil {
+		return nil, err
+	}
 	if err := c.requireAPIKey(); err != nil {
 		return nil, err
 	}
@@ -186,6 +196,9 @@ func (c *Client) CreateResponse(ctx context.Context, request ResponseRequest) (*
 // StreamResponse starts an OpenAI-compatible Responses SSE stream. The caller
 // must close the returned stream. The stream ends after response.completed.
 func (c *Client) StreamResponse(ctx context.Context, request ResponseRequest) (*ResponseStream, error) {
+	if err := validateAutoModel(request.Model); err != nil {
+		return nil, err
+	}
 	if err := c.requireAPIKey(); err != nil {
 		return nil, err
 	}
@@ -218,6 +231,9 @@ func (c *Client) StreamResponse(ctx context.Context, request ResponseRequest) (*
 
 // GenerateImage creates an OpenAI-compatible image generation.
 func (c *Client) GenerateImage(ctx context.Context, request ImageGenerationRequest) (*ImageGenerationResponse, error) {
+	if err := validateAutoModel(request.Model); err != nil {
+		return nil, err
+	}
 	if err := c.requireAPIKey(); err != nil {
 		return nil, err
 	}
@@ -230,6 +246,9 @@ func (c *Client) GenerateImage(ctx context.Context, request ImageGenerationReque
 
 // CreateMessage creates a non-streaming Anthropic-compatible message.
 func (c *Client) CreateMessage(ctx context.Context, request MessageRequest) (*MessageResponse, error) {
+	if err := validateAutoModel(request.Model); err != nil {
+		return nil, err
+	}
 	if err := c.requireAPIKey(); err != nil {
 		return nil, err
 	}
@@ -244,6 +263,9 @@ func (c *Client) CreateMessage(ctx context.Context, request MessageRequest) (*Me
 // StreamMessage starts a streaming Anthropic-compatible message.
 // The caller must close the returned stream.
 func (c *Client) StreamMessage(ctx context.Context, request MessageRequest) (*MessageStream, error) {
+	if err := validateAutoModel(request.Model); err != nil {
+		return nil, err
+	}
 	if err := c.requireAPIKey(); err != nil {
 		return nil, err
 	}
@@ -277,11 +299,56 @@ func (c *Client) StreamMessage(ctx context.Context, request MessageRequest) (*Me
 
 // ListModels lists the public JoyToken model catalog.
 func (c *Client) ListModels(ctx context.Context) (*ModelListResponse, error) {
-	var response ModelListResponse
-	if err := c.requestJSON(ctx, http.MethodGet, c.apiBaseURL+"/api/v1/models", nil, &response); err != nil {
+	return c.ListModelsWithOptions(ctx, ListModelsOptions{})
+}
+
+// ListModelsWithOptions lists the public JoyToken model catalog with optional
+// response localization. When Locale is empty, the API defaults to English.
+func (c *Client) ListModelsWithOptions(ctx context.Context, options ListModelsOptions) (*ModelListResponse, error) {
+	endpoint := c.apiBaseURL + "/api/v1/models"
+	if options.Locale != "" {
+		if options.Locale != ModelLocaleZH && options.Locale != ModelLocaleEN {
+			return nil, fmt.Errorf("joytoken: model locale must be %q or %q", ModelLocaleZH, ModelLocaleEN)
+		}
+		endpoint += "?locale=" + url.QueryEscape(string(options.Locale))
+	}
+
+	var response struct {
+		Code    int             `json:"code,omitempty"`
+		Message string          `json:"message,omitempty"`
+		Object  string          `json:"object,omitempty"`
+		Data    json.RawMessage `json:"data"`
+	}
+	if err := c.requestJSON(ctx, http.MethodGet, endpoint, nil, &response); err != nil {
 		return nil, err
 	}
-	return &response, nil
+
+	var models []ModelInfo
+	data := bytes.TrimSpace(response.Data)
+	switch {
+	case len(data) == 0 || bytes.Equal(data, []byte("null")):
+	case data[0] == '[':
+		if err := json.Unmarshal(data, &models); err != nil {
+			return nil, fmt.Errorf("joytoken: decode model list: %w", err)
+		}
+	case data[0] == '{':
+		var catalog struct {
+			Models []ModelInfo `json:"models"`
+		}
+		if err := json.Unmarshal(data, &catalog); err != nil {
+			return nil, fmt.Errorf("joytoken: decode model list: %w", err)
+		}
+		models = catalog.Models
+	default:
+		return nil, fmt.Errorf("joytoken: unexpected model list response")
+	}
+
+	return &ModelListResponse{
+		Code:    response.Code,
+		Message: response.Message,
+		Object:  response.Object,
+		Data:    ModelListData{Models: models},
+	}, nil
 }
 
 // GetModelMeta returns filter metadata for the model catalog.
@@ -481,6 +548,13 @@ func (c *Client) withTimeout(ctx context.Context) (context.Context, context.Canc
 func (c *Client) requireAPIKey() error {
 	if strings.TrimSpace(c.apiKey) == "" {
 		return ErrMissingAPIKey
+	}
+	return nil
+}
+
+func validateAutoModel(model string) error {
+	if model != ModelAuto {
+		return fmt.Errorf("joytoken: model must be %q", ModelAuto)
 	}
 	return nil
 }

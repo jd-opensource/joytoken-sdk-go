@@ -1,5 +1,8 @@
 package joytoken
 
+// ModelAuto is the only model value accepted by JoyToken requests.
+const ModelAuto = "auto"
+
 // ChatMessage is an OpenAI-compatible conversation message.
 type ChatMessage struct {
 	Role       string     `json:"role"`
@@ -35,7 +38,8 @@ type ChatToolFunction struct {
 	Parameters  map[string]any `json:"parameters,omitempty"`
 }
 
-// ChatCompletionRequest is an OpenAI-compatible completion request.
+// ChatCompletionRequest is an OpenAI-compatible completion request. Model must
+// be ModelAuto.
 type ChatCompletionRequest struct {
 	Model       string         `json:"model"`
 	Messages    []ChatMessage  `json:"messages"`
@@ -109,8 +113,9 @@ type ResponseTool struct {
 	Parameters  map[string]any `json:"parameters,omitempty"`
 }
 
-// ResponseRequest is a request to the OpenAI-compatible Responses API. Input
-// may be a string or a slice of ResponseInputItem values.
+// ResponseRequest is a request to the OpenAI-compatible Responses API. Model
+// must be ModelAuto. Input may be a string or a slice of ResponseInputItem
+// values.
 type ResponseRequest struct {
 	Model           string         `json:"model"`
 	Input           any            `json:"input"`
@@ -190,8 +195,8 @@ type ResponseStreamEvent struct {
 }
 
 // ImageGenerationRequest is an OpenAI-compatible image generation request.
-// Model and Prompt are required by the JoyToken gateway; other fields are
-// forwarded to the selected image provider.
+// Model must be ModelAuto and Prompt is required by the JoyToken gateway;
+// other fields are forwarded to the selected image provider.
 type ImageGenerationRequest struct {
 	Model             string `json:"model"`
 	Prompt            string `json:"prompt"`
@@ -231,19 +236,56 @@ type Usage struct {
 	TotalCost        *float64 `json:"total_cost,omitempty"`
 }
 
+// ModelLocale selects the language used for localized model descriptions.
+type ModelLocale string
+
+const (
+	// ModelLocaleZH requests Chinese model descriptions.
+	ModelLocaleZH ModelLocale = "zh"
+	// ModelLocaleEN requests English model descriptions.
+	ModelLocaleEN ModelLocale = "en"
+)
+
+// ListModelsOptions configures a public model catalog request.
+type ListModelsOptions struct {
+	// Locale selects zh or en. An empty value leaves the parameter unset, so
+	// the API returns its default English descriptions.
+	Locale ModelLocale
+}
+
 // ModelListResponse contains the models available to the caller.
 type ModelListResponse struct {
-	Object string      `json:"object,omitempty"`
-	Data   []ModelInfo `json:"data"`
+	Code    int           `json:"code,omitempty"`
+	Message string        `json:"message,omitempty"`
+	Object  string        `json:"object,omitempty"`
+	Data    ModelListData `json:"data"`
+}
+
+// ModelListData is the data envelope returned by the model catalog.
+type ModelListData struct {
+	Models []ModelInfo `json:"models"`
 }
 
 // ModelInfo is a model summary returned by ListModels.
 type ModelInfo struct {
-	ID            string         `json:"id"`
-	Name          string         `json:"name,omitempty"`
-	Description   string         `json:"description,omitempty"`
-	ContextLength int            `json:"context_length,omitempty"`
-	Pricing       map[string]any `json:"pricing,omitempty"`
+	ModelID                      string   `json:"modelId,omitempty"`
+	ModelKey                     string   `json:"modelKey,omitempty"`
+	DisplayName                  string   `json:"displayName,omitempty"`
+	Alias                        string   `json:"alias,omitempty"`
+	Tier                         string   `json:"tier,omitempty"`
+	Tags                         []string `json:"tags,omitempty"`
+	Description                  string   `json:"description,omitempty"`
+	CustomerInputMtok            float64  `json:"customerInputMtok,omitempty"`
+	CustomerOutputMtok           float64  `json:"customerOutputMtok,omitempty"`
+	CustomerCachereadMtok        float64  `json:"customerCachereadMtok,omitempty"`
+	CustomerCachewriteMtok       float64  `json:"customerCachewriteMtok,omitempty"`
+	CustomerImageInputMtok       string   `json:"customerImageInputMtok,omitempty"`
+	CustomerImageOutputMtok      string   `json:"customerImageOutputMtok,omitempty"`
+	CustomerImageCachedInputMtok string   `json:"customerImageCachedInputMtok,omitempty"`
+	Provider                     string   `json:"provider,omitempty"`
+	FeatureTags                  []string `json:"featureTags,omitempty"`
+	ScenarioTags                 []string `json:"scenarioTags,omitempty"`
+	MCIScore                     float64  `json:"mciScore,omitempty"`
 }
 
 // CatalogOption is a value-label pair used by model catalog filters.
@@ -328,7 +370,8 @@ type MessageTool struct {
 	InputSchema map[string]any `json:"input_schema"`
 }
 
-// MessageRequest is an Anthropic-compatible Messages request.
+// MessageRequest is an Anthropic-compatible Messages request. Model must be
+// ModelAuto.
 type MessageRequest struct {
 	Model       string         `json:"model"`
 	MaxTokens   int            `json:"max_tokens"`

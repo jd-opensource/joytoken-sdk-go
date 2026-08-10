@@ -18,7 +18,7 @@ func TestCreateChatCompletion(t *testing.T) {
 
 	client := NewClient(WithAPIKey("test-key"), WithAPIBaseURL(server.URL), WithOpenAIBaseURL(server.URL+"/openai/v1"))
 	response, err := client.CreateChatCompletion(context.Background(), ChatCompletionRequest{
-		Model: "joy/mock",
+		Model: ModelAuto,
 		Messages: []ChatMessage{
 			{Role: "user", Content: "hello"},
 		},
@@ -37,7 +37,7 @@ func TestStreamChatCompletion(t *testing.T) {
 
 	client := NewClient(WithAPIKey("test-key"), WithAPIBaseURL(server.URL), WithOpenAIBaseURL(server.URL+"/openai/v1"))
 	stream, err := client.StreamChatCompletion(context.Background(), ChatCompletionRequest{
-		Model: "joy/mock",
+		Model: ModelAuto,
 		Messages: []ChatMessage{
 			{Role: "user", Content: "hello"},
 		},
@@ -66,7 +66,7 @@ func TestCreateResponse(t *testing.T) {
 	client := NewClient(WithAPIKey("test-key"), WithOpenAIBaseURL(server.URL+"/openai/v1"))
 	maxTokens := 128
 	response, err := client.CreateResponse(context.Background(), ResponseRequest{
-		Model:           "joy/mock",
+		Model:           ModelAuto,
 		Input:           "hello",
 		Instructions:    "Be concise",
 		MaxOutputTokens: &maxTokens,
@@ -87,7 +87,7 @@ func TestStreamResponse(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(WithAPIKey("test-key"), WithOpenAIBaseURL(server.URL+"/openai/v1"))
-	stream, err := client.StreamResponse(context.Background(), ResponseRequest{Model: "joy/mock", Input: "hello"})
+	stream, err := client.StreamResponse(context.Background(), ResponseRequest{Model: ModelAuto, Input: "hello"})
 	if err != nil {
 		t.Fatalf("StreamResponse returned error: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestGenerateImage(t *testing.T) {
 
 	client := NewClient(WithAPIKey("test-key"), WithOpenAIBaseURL(server.URL+"/openai/v1"))
 	response, err := client.GenerateImage(context.Background(), ImageGenerationRequest{
-		Model:  "joy/image-mock",
+		Model:  ModelAuto,
 		Prompt: "A JoyToken logo on a black background",
 		Size:   "1024x1024",
 	})
@@ -153,7 +153,7 @@ func TestStreamChatCompletionHandlesLargeSSEEvent(t *testing.T) {
 		WithOpenAIBaseURL(server.URL+"/openai/v1"),
 	)
 	stream, err := client.StreamChatCompletion(context.Background(), ChatCompletionRequest{
-		Model: "joy/mock",
+		Model: ModelAuto,
 		Messages: []ChatMessage{
 			{Role: "user", Content: "hello"},
 		},
@@ -182,7 +182,7 @@ func TestStreamChatCompletionHandlesMultilineSSEEvent(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(WithAPIKey("test-key"), WithOpenAIBaseURL(server.URL))
-	stream, err := client.StreamChatCompletion(context.Background(), ChatCompletionRequest{Model: "joy/mock"})
+	stream, err := client.StreamChatCompletion(context.Background(), ChatCompletionRequest{Model: ModelAuto})
 	if err != nil {
 		t.Fatalf("StreamChatCompletion returned error: %v", err)
 	}
@@ -204,7 +204,7 @@ func TestCreateMessage(t *testing.T) {
 	client := NewClient(WithAPIKey("test-key"), WithAPIBaseURL(server.URL), WithAnthropicBaseURL(server.URL+"/anthropic/v1"))
 	temperature := 0.7
 	response, err := client.CreateMessage(context.Background(), MessageRequest{
-		Model:       "joy/mock",
+		Model:       ModelAuto,
 		MaxTokens:   128,
 		Temperature: &temperature,
 		Tier:        "standard",
@@ -227,7 +227,7 @@ func TestStreamMessage(t *testing.T) {
 	client := NewClient(WithAPIKey("test-key"), WithAPIBaseURL(server.URL), WithAnthropicBaseURL(server.URL+"/anthropic/v1"))
 	temperature := 0.7
 	stream, err := client.StreamMessage(context.Background(), MessageRequest{
-		Model:       "joy/mock",
+		Model:       ModelAuto,
 		MaxTokens:   128,
 		Temperature: &temperature,
 		Tier:        "standard",
@@ -261,8 +261,42 @@ func TestListModels(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListModels returned error: %v", err)
 	}
-	if got := models.Data[0].ID; got != "joy/mock" {
-		t.Fatalf("expected joy/mock, got %s", got)
+	if got := models.Data.Models[0].ModelID; got != "auto" {
+		t.Fatalf("expected auto, got %s", got)
+	}
+}
+
+func TestListModelsWithOptionsAddsLocale(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("locale"); got != "zh" {
+			t.Errorf("locale = %q, want zh", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"code":0,"message":"success","data":{"models":[{"modelId":"auto","modelKey":"auto","displayName":"auto","alias":"auto","tier":"standard","tags":["lock"],"description":"localized","customerInputMtok":200,"customerOutputMtok":900,"customerCachereadMtok":20,"customerCachewriteMtok":250,"customerImageInputMtok":"","customerImageOutputMtok":"","customerImageCachedInputMtok":"","provider":"auto","featureTags":["agent"],"scenarioTags":[],"mciScore":7.57}]}}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(WithAPIBaseURL(server.URL))
+	models, err := client.ListModelsWithOptions(context.Background(), ListModelsOptions{Locale: ModelLocaleZH})
+	if err != nil {
+		t.Fatalf("ListModelsWithOptions returned error: %v", err)
+	}
+	if got := models.Data.Models[0].ModelID; got != "auto" {
+		t.Fatalf("expected auto, got %s", got)
+	}
+	if got := models.Data.Models[0].DisplayName; got != "auto" {
+		t.Fatalf("expected displayName auto, got %s", got)
+	}
+	if got := models.Data.Models[0].CustomerCachereadMtok; got != 20 {
+		t.Fatalf("expected customerCachereadMtok 20, got %v", got)
+	}
+}
+
+func TestListModelsWithOptionsRejectsInvalidLocale(t *testing.T) {
+	client := NewClient()
+	_, err := client.ListModelsWithOptions(context.Background(), ListModelsOptions{Locale: ModelLocale("zh-CN")})
+	if err == nil || !strings.Contains(err.Error(), "model locale") {
+		t.Fatalf("error = %v, want invalid model locale", err)
 	}
 }
 
@@ -297,8 +331,8 @@ func TestListModelsDoesNotRequireAPIKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListModels returned error: %v", err)
 	}
-	if got := models.Data[0].ID; got != "joy/mock" {
-		t.Fatalf("expected joy/mock, got %s", got)
+	if got := models.Data.Models[0].ModelID; got != "auto" {
+		t.Fatalf("expected auto, got %s", got)
 	}
 }
 
@@ -392,6 +426,53 @@ func TestAuthenticatedRequestsRequireAPIKey(t *testing.T) {
 	}
 }
 
+func TestModelRequestsRequireAuto(t *testing.T) {
+	client := NewClient(WithAPIKey("test-key"))
+	ctx := context.Background()
+
+	tests := []struct {
+		name string
+		call func() error
+	}{
+		{name: "chat completions", call: func() error {
+			_, err := client.CreateChatCompletion(ctx, ChatCompletionRequest{Model: "unsupported-model"})
+			return err
+		}},
+		{name: "chat completions stream", call: func() error {
+			_, err := client.StreamChatCompletion(ctx, ChatCompletionRequest{Model: "unsupported-model"})
+			return err
+		}},
+		{name: "responses", call: func() error {
+			_, err := client.CreateResponse(ctx, ResponseRequest{Model: "unsupported-model", Input: "hello"})
+			return err
+		}},
+		{name: "responses stream", call: func() error {
+			_, err := client.StreamResponse(ctx, ResponseRequest{Model: "unsupported-model", Input: "hello"})
+			return err
+		}},
+		{name: "images", call: func() error {
+			_, err := client.GenerateImage(ctx, ImageGenerationRequest{Model: "unsupported-model", Prompt: "hello"})
+			return err
+		}},
+		{name: "messages", call: func() error {
+			_, err := client.CreateMessage(ctx, MessageRequest{Model: "unsupported-model", MaxTokens: 16})
+			return err
+		}},
+		{name: "messages stream", call: func() error {
+			_, err := client.StreamMessage(ctx, MessageRequest{Model: "unsupported-model", MaxTokens: 16})
+			return err
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := tt.call(); err == nil || !strings.Contains(err.Error(), `model must be "auto"`) {
+				t.Fatalf("expected auto-only model error, got %v", err)
+			}
+		})
+	}
+}
+
 func TestSDKAuthenticationAndRequestHeadersTakePrecedence(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -434,7 +515,7 @@ func newMockServer(t *testing.T) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/models" {
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(ModelListResponse{Object: "list", Data: []ModelInfo{{ID: "joy/mock"}}})
+			_ = json.NewEncoder(w).Encode(ModelListResponse{Object: "list", Data: ModelListData{Models: []ModelInfo{{ModelID: "auto", ModelKey: "auto", DisplayName: "auto", Alias: "auto"}}}})
 			return
 		}
 
@@ -484,15 +565,15 @@ func newMockServer(t *testing.T) *httptest.Server {
 			}
 			if payload.Stream {
 				w.Header().Set("Content-Type", "text/event-stream")
-				_, _ = w.Write([]byte("event: response.created\ndata: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_test\",\"object\":\"response\",\"status\":\"in_progress\",\"model\":\"joy/mock\"}}\n\n"))
+				_, _ = w.Write([]byte("event: response.created\ndata: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_test\",\"object\":\"response\",\"status\":\"in_progress\",\"model\":\"auto\"}}\n\n"))
 				_, _ = w.Write([]byte("event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"sequence_number\":1,\"delta\":\"hello\",\"item_id\":\"resp_test-msg\"}\n\n"))
 				_, _ = w.Write([]byte("event: response.output_text.done\ndata: {\"type\":\"response.output_text.done\",\"sequence_number\":2,\"text\":\"hello\"}\n\n"))
-				_, _ = w.Write([]byte("event: response.completed\ndata: {\"type\":\"response.completed\",\"sequence_number\":3,\"response\":{\"id\":\"resp_test\",\"object\":\"response\",\"status\":\"completed\",\"model\":\"joy/mock\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hello\"}]}]}}\n\n"))
+				_, _ = w.Write([]byte("event: response.completed\ndata: {\"type\":\"response.completed\",\"sequence_number\":3,\"response\":{\"id\":\"resp_test\",\"object\":\"response\",\"status\":\"completed\",\"model\":\"auto\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hello\"}]}]}}\n\n"))
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(Response{
-				ID: "resp_test", Object: "response", Status: "completed", Model: "joy/mock",
+				ID: "resp_test", Object: "response", Status: "completed", Model: "auto",
 				Output: []ResponseOutputItem{{Type: "message", Role: "assistant", Status: "completed", Content: []ResponseOutputContent{{Type: "output_text", Text: "hello"}}}},
 				Usage:  &ResponseUsage{InputTokens: 1, OutputTokens: 1, TotalTokens: 2},
 			})
@@ -501,7 +582,7 @@ func newMockServer(t *testing.T) *httptest.Server {
 			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 				t.Errorf("decode image request: %v", err)
 			}
-			if payload.Model != "joy/image-mock" || payload.Prompt != "A JoyToken logo on a black background" || payload.Size != "1024x1024" {
+			if payload.Model != ModelAuto || payload.Prompt != "A JoyToken logo on a black background" || payload.Size != "1024x1024" {
 				t.Errorf("unexpected image request: %#v", payload)
 			}
 			w.Header().Set("Content-Type", "application/json")
@@ -533,7 +614,7 @@ func newMockServer(t *testing.T) *httptest.Server {
 				Type:       "message",
 				Role:       "assistant",
 				Content:    []MessageContentBlock{{Type: "text", Text: "hello"}},
-				Model:      "joy/mock",
+				Model:      "auto",
 				StopReason: &stopReason,
 				Usage:      MessageUsage{InputTokens: 1, OutputTokens: 1},
 			})
