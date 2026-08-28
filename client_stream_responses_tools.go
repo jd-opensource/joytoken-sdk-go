@@ -77,7 +77,7 @@ func (s *ResponseStream) Close() error {
 }
 
 // RunResponseStream executes the Responses tool loop while consuming each
-// model turn as native SSE. Later-turn failures retain a non-nil partial result.
+// model turn as native SSE. Failures retain a partial result marked "error".
 func (c *Client) RunResponseStream(ctx context.Context, request ResponseRequest, opts RunResponseStreamOptions) (*RunResponseResult, error) {
 	maxSteps := opts.MaxSteps
 	if maxSteps <= 0 {
@@ -94,6 +94,7 @@ func (c *Client) RunResponseStream(ctx context.Context, request ResponseRequest,
 		response, err := c.streamOneResponseTurn(ctx, stepRequest, opts.OnTextDelta)
 		if err != nil {
 			result.Input = input
+			result.StoppedBy = runStoppedByError
 			return result, err
 		}
 		calls := functionCalls(response)
@@ -108,6 +109,7 @@ func (c *Client) RunResponseStream(ctx context.Context, request ResponseRequest,
 			})
 			if err != nil {
 				result.Input = input
+				result.StoppedBy = runStoppedByError
 				return result, err
 			}
 			toolResults = append(toolResults, toolResult)

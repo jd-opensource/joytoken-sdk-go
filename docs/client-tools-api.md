@@ -176,7 +176,26 @@ SDK 保留该事件并把 `Choices` 标准化为空切片；调用方应使用 `
 >
 > Anthropic Messages 兼容层也提供 `RunMessageStream(ctx, req, RunMessageStreamOptions)`；它把 Chat SSE 转换为 Messages 事件语义，执行 `tool_use`，并把 `tool_result` 追加到下一轮。
 
-如果任一显式 `Run*` 在后续模型轮次返回错误，SDK 会同时返回非 nil 的部分结果。已完成的 `Steps`、`ToolResults` 及累积 transcript 不会丢失，调用方应先记录或持久化这些信息，再处理错误。
+如果任一显式 `Run*` 的模型请求或本地执行返回错误，SDK 会同时返回非 nil 的部分结果。已完成的 `Steps`、`ToolResults` 及累积 transcript 不会丢失，调用方应先记录或持久化这些信息，再处理错误。
+
+| `StoppedBy` | 含义 |
+|---|---|
+| `stop` | 模型已经返回最终答案 |
+| `max_steps` | 工具循环真正耗尽配置的 `MaxSteps` |
+| `error` | 模型请求、流读取或本地工具执行失败；同时返回非 nil 的 `error` |
+
+Chat 的 `RunChatCompletion` / `RunChatCompletionStream` 在错误路径还会将顶层 `FinishReason` 设置为 `"error"`。该值描述整个工具循环的终止原因；每个 `ToolStep.FinishReason` 仍保留对应模型轮次返回的原始值。
+
+```go
+result, err := client.RunChatCompletion(ctx, request, joytoken.RunChatOptions{})
+if err != nil {
+    if result != nil {
+        log.Printf("tool loop stopped: by=%s steps=%d", result.StoppedBy, len(result.Steps))
+        // result.Messages 和 result.Steps 可用于保存已经完成的工具工作。
+    }
+    return err
+}
+```
 
 ### 3.5 Responses API 闭环 `RunResponse`
 

@@ -22,6 +22,8 @@ type RunResponseResult struct {
 	FinalText string
 	Input     []ResponseInputItem
 	Steps     []ResponseToolStep
+	// StoppedBy is "stop", "max_steps", or "error". On error, Steps and Input
+	// retain all work completed before the failure.
 	StoppedBy string
 }
 
@@ -224,8 +226,8 @@ func (c *Client) createResponseOnce(ctx context.Context, request ResponseRequest
 }
 
 // RunResponse executes native Responses function calls until the model returns
-// a final output or MaxSteps is reached. A later-turn failure returns a non-nil
-// partial result containing completed steps and accumulated input items.
+// a final output or MaxSteps is reached. A request or local execution failure
+// returns a non-nil partial result marked StoppedBy "error".
 func (c *Client) RunResponse(ctx context.Context, request ResponseRequest, opts RunResponseOptions) (*RunResponseResult, error) {
 	maxSteps := opts.MaxSteps
 	if maxSteps <= 0 {
@@ -242,6 +244,7 @@ func (c *Client) RunResponse(ctx context.Context, request ResponseRequest, opts 
 		response, err := c.createResponseOnce(ctx, stepRequest)
 		if err != nil {
 			result.Input = input
+			result.StoppedBy = runStoppedByError
 			return result, err
 		}
 		calls := functionCalls(response)
@@ -256,6 +259,7 @@ func (c *Client) RunResponse(ctx context.Context, request ResponseRequest, opts 
 			})
 			if err != nil {
 				result.Input = input
+				result.StoppedBy = runStoppedByError
 				return result, err
 			}
 			toolResults = append(toolResults, toolResult)

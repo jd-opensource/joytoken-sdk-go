@@ -188,7 +188,7 @@ metadata 中的 ID，也会在成功响应 header 存在 ID 时将其作为兜�
 
 HTTP 请求失败时会返回 `*joytoken.APIError`。可以使用 `joytoken.IsAPIError(err)` 或 `errors.As` 获取状态码、请求 ID、响应头和解析后的响应体。Agent 包会将 Provider 和工具执行错误原样返回给调用方。
 
-显式 `Run*` 方法如果在后续模型轮次失败，会同时返回错误和部分结果。调用方可以从 `Steps` 以及已累积的 `Messages` 或 `Input` 中保留已经完成的工具工作和诊断信息。
+显式 `Run*` 方法如果模型请求或本地执行失败，会同时返回错误和部分结果，并设置 `StoppedBy == "error"`。调用方可以从 `Steps` 以及已累积的 `Messages` 或 `Input` 中保留已经完成的工具工作和诊断信息。只有真正耗尽配置的步骤上限时才会返回 `StoppedBy == "max_steps"`；Chat 工具循环在错误路径还会将 `FinishReason` 设置为 `"error"`。
 
 ## 验证
 

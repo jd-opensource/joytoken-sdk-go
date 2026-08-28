@@ -193,7 +193,7 @@ Authenticated model calls, model metadata and pricing requests return `joytoken.
 
 HTTP failures are returned as `*joytoken.APIError`. Use `joytoken.IsAPIError(err)` or `errors.As` to inspect the status code, request ID, response headers, and parsed response body. The Agent package returns provider and tool errors to the caller without hiding them.
 
-Explicit `Run*` methods return the partial result together with an error when a later model turn fails. Inspect `Steps` and the accumulated `Messages` or `Input` to retain already completed tool work and diagnostics.
+Explicit `Run*` methods return the partial result together with an error when a model request or local execution fails. The partial result uses `StoppedBy == "error"`; inspect `Steps` and the accumulated `Messages` or `Input` to retain already completed tool work and diagnostics. `StoppedBy == "max_steps"` is reserved for a loop that actually exhausts its configured step limit. For Chat runs, `FinishReason` is also `"error"` on this path.
 
 ## Validate
 

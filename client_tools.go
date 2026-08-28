@@ -9,6 +9,8 @@ import (
 // requesting tools can never spin forever.
 const defaultToolMaxSteps = 8
 
+const runStoppedByError = "error"
+
 // RunChatOptions configures one RunChatCompletion execution loop. It is an
 // additive, opt-in surface: it does not change ChatCompletionRequest or any
 // existing method, so callers that never touch RunChatCompletion are
@@ -47,9 +49,12 @@ type RunChatResult struct {
 	FinalText string
 	Messages  []ChatMessage
 	Steps     []ToolStep
+	// StoppedBy is "stop" for a final answer, "max_steps" when the configured
+	// bound is exhausted, or "error" when a request or local execution fails.
 	StoppedBy string
 	// FinishReason is the normalized, provider-neutral classification of why
-	// the loop stopped (its String() value). "malformed_function_call" here
+	// the loop stopped. It is "error" when a request or local execution fails.
+	// "malformed_function_call" here
 	// means the loop exhausted its retries on a model that kept emitting
 	// invalid tool-call payloads, so the caller can distinguish a real answer
 	// from a vendor-side tool-calling failure instead of seeing an empty
@@ -145,11 +150,16 @@ func (c *Client) runChatCompletion(ctx context.Context, request ChatCompletionRe
 			response, err = c.createChatCompletionOnce(ctx, stepRequest)
 			if err != nil {
 				result.Messages = messages
+				result.StoppedBy = runStoppedByError
+				result.FinishReason = runStoppedByError
 				return result, err
 			}
 		}
 		if len(response.Choices) == 0 {
-			return nil, fmt.Errorf("chat completion returned no choices")
+			result.Messages = messages
+			result.StoppedBy = runStoppedByError
+			result.FinishReason = runStoppedByError
+			return result, fmt.Errorf("chat completion returned no choices")
 		}
 
 		assistant := response.Choices[0].Message
@@ -161,6 +171,8 @@ func (c *Client) runChatCompletion(ctx context.Context, request ChatCompletionRe
 		toolResults, err := c.executeToolCallsWithHandlers(ctx, handlers, step, assistant.ToolCalls, messages)
 		if err != nil {
 			result.Messages = messages
+			result.StoppedBy = runStoppedByError
+			result.FinishReason = runStoppedByError
 			return result, err
 		}
 
