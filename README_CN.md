@@ -165,6 +165,16 @@ for {
 }
 ```
 
+Gateway 可能发送只有 metadata/usage、没有 choices 的 SSE 事件。SDK 会保留该
+事件并将 `chunk.Choices` 标准化为空切片，因此 `range` 和
+`len(chunk.Choices)` 都是安全的；不要在未检查长度时直接访问
+`chunk.Choices[0]`。协议层 usage 缺失时，SDK 会从 `metadata.billing`
+回填 token 数；如果协议层明确提供 usage，则始终以协议值为准。
+
+可以使用 `response.RequestID()`、`chunk.RequestID()` 或
+`joytoken.RequestIDFromMetadata(metadata)` 获取请求 ID。SDK 优先保留响应
+metadata 中的 ID，也会在成功响应 header 存在 ID 时将其作为兜底。
+
 `StreamMessage` 为 Anthropic Messages 提供原始事件迭代；需要流式工具闭环时使用 `RunMessageStream`。调用方提前停止消费原始流时，应始终关闭流。
 
 ## 错误处理

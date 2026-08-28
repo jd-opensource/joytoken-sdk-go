@@ -168,6 +168,17 @@ for {
 }
 ```
 
+The Gateway may emit a metadata/usage-only SSE event with no choices. The SDK
+preserves that event and normalizes `chunk.Choices` to an empty slice, so range
+and `len(chunk.Choices)` are safe. Never index `chunk.Choices[0]` without a
+length check. When protocol-level usage is absent, the SDK derives token counts
+from `metadata.billing`; explicit protocol usage remains authoritative.
+
+Use `response.RequestID()`, `chunk.RequestID()`, or
+`joytoken.RequestIDFromMetadata(metadata)` to read the request ID. These helpers
+prefer response metadata and also accept a successful HTTP request-ID header
+when one is available.
+
 `StreamMessage` exposes the same raw iterator pattern for Anthropic Messages; use `RunMessageStream` for its streaming tool loop. Always close a raw stream when the consumer stops early.
 
 ## Errors

@@ -86,8 +86,10 @@ req := joytoken.ChatCompletionRequest{
 resp, _ := c.CreateChatCompletion(ctx, req)
 
 // 模型返回 tool_calls 后，全部由调用方自己解析、执行、回填、再次请求
-for _, call := range resp.Choices[0].Message.ToolCalls {
-    //用户自己写：查函数 -> 执行 -> 组 tool 消息 -> 再调 CreateChatCompletion
+if resp != nil && len(resp.Choices) > 0 {
+    for _, call := range resp.Choices[0].Message.ToolCalls {
+        //用户自己写：查函数 -> 执行 -> 组 tool 消息 -> 再调 CreateChatCompletion
+    }
 }
 ```
 
@@ -154,6 +156,13 @@ result, _ := c.RunChatCompletionStream(ctx, req, joytoken.RunChatStreamOptions{
 ```
 
 每个模型轮次以 SSE 消费：SDK 累积文本（通过 `OnTextDelta` 透传）与增量 `tool_calls`；流结束后执行工具、回填、再开新流，直到某轮无 tool_calls 或到达 MaxSteps。`StreamChatCompletion` 原始流式语义完全不变。
+
+原始 Chat SSE 可能包含只有 `metadata` / `usage`、没有 `choices` 的事件。
+SDK 保留该事件并把 `Choices` 标准化为空切片；调用方应使用 `range` 或先检查
+`len(chunk.Choices)`，不要无条件访问 `chunk.Choices[0]`。当协议层 usage
+缺失时，SDK 从 `metadata.billing.input_tokens/output_tokens` 回填；Messages
+和 Responses 适配复用同一兜底。请求 ID 使用 `chunk.RequestID()`、
+`response.RequestID()` 或 `RequestIDFromMetadata` 获取。
 
 > 可见「流式」和「工具执行」并不互斥：原语 `StreamChatCompletion` 不执行工具，流式闭环 `RunChatCompletionStream` 则边流式边执行。
 >

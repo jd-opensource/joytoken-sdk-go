@@ -349,9 +349,10 @@ func (c *Client) StreamChatCompletion(ctx context.Context, request ChatCompletio
 	}
 
 	return &ChatCompletionStream{
-		body:    res.Body,
-		scanner: newSSEScanner(res.Body),
-		cancel:  cancel,
+		body:      res.Body,
+		scanner:   newSSEScanner(res.Body),
+		cancel:    cancel,
+		requestID: requestIDFromHeaders(res.Header),
 	}, nil
 }
 
@@ -461,7 +462,11 @@ func (c *Client) requestJSON(ctx context.Context, method string, url string, bod
 		return parseAPIError(res)
 	}
 
-	return json.NewDecoder(res.Body).Decode(output)
+	if err := json.NewDecoder(res.Body).Decode(output); err != nil {
+		return err
+	}
+	normalizeSuccessOutput(output, res.Header)
+	return nil
 }
 
 // sendWithRetry issues the request and transparently retries transient
@@ -610,9 +615,10 @@ func (c *Client) newJSONRequest(ctx context.Context, method string, url string, 
 
 // ChatCompletionStream reads Chat Completions SSE events.
 type ChatCompletionStream struct {
-	body    io.ReadCloser
-	scanner *bufio.Scanner
-	cancel  context.CancelFunc
+	body      io.ReadCloser
+	scanner   *bufio.Scanner
+	cancel    context.CancelFunc
+	requestID string
 }
 
 // Recv returns the next completion chunk or io.EOF when the stream ends.
@@ -621,6 +627,10 @@ func (s *ChatCompletionStream) Recv() (*ChatCompletionChunk, error) {
 	if err := recvSSEJSON(s.scanner, &chunk); err != nil {
 		_ = s.Close()
 		return nil, err
+	}
+	normalizeChatChunk(&chunk, s.requestID)
+	if requestID := chunk.RequestID(); requestID != "" {
+		s.requestID = requestID
 	}
 	return &chunk, nil
 }
@@ -729,10 +739,14 @@ func parseAPIError(res *http.Response) error {
 			body = string(raw)
 		}
 	}
+	requestID := requestIDFromHeaders(res.Header)
+	if requestID == "" {
+		requestID = requestIDFromBody(body)
+	}
 	return &APIError{
 		StatusCode:      res.StatusCode,
 		Code:            classifyStatus(res.StatusCode),
-		RequestID:       firstHeader(res.Header, "X-DAOE-Request-ID", "X-Request-ID"),
+		RequestID:       requestID,
 		ResponseHeaders: res.Header.Clone(),
 		Body:            body,
 	}
