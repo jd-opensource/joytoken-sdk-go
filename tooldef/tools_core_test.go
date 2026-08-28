@@ -128,13 +128,13 @@ func TestEvalExpressionCases(t *testing.T) {
 
 func TestEvalExpressionErrors(t *testing.T) {
 	cases := []string{
-		"",           // empty
-		"1 +",        // dangling operator
-		"(1 + 2",     // unbalanced paren
-		"1 / 0",      // division by zero
-		"5 % 0",      // modulo by zero
-		"1 2",        // unexpected trailing token
-		"abc",        // not a number
+		"",       // empty
+		"1 +",    // dangling operator
+		"(1 + 2", // unbalanced paren
+		"1 / 0",  // division by zero
+		"5 % 0",  // modulo by zero
+		"1 2",    // unexpected trailing token
+		"abc",    // not a number
 	}
 	for _, expr := range cases {
 		if _, err := EvalExpression(expr); err == nil {

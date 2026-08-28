@@ -44,7 +44,6 @@ func main() {
 	fmt.Println("JoyToken live default-tools verification")
 	fmt.Printf("Model: %s\n\n", joytoken.ModelAuto)
 
-
 	// The datetime tool has the simplest possible schema (two optional string
 	// fields, or an empty {} argument object), so the model does not have to
 	// serialize operators or long numbers into a JSON string. That minimizes

@@ -2,8 +2,9 @@ package main
 
 // indexHTML is the single-page UI served at "/". It renders a chat box and an
 // "Enable Tools" switch that maps directly to the backend routing:
-//   ON  -> agent SDK with default tools
-//   OFF -> bare client, plain chat
+//
+//	ON  -> agent SDK with default tools
+//	OFF -> bare client, plain chat
 const indexHTML = `<!DOCTYPE html>
 <html lang="zh">
 <head>
