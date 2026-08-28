@@ -129,7 +129,10 @@ func responseInputToChat(input []ResponseInputItem, instructions string) []ChatM
 	for _, item := range input {
 		switch item.Type {
 		case "function_call":
-			call := ToolCall{ID: item.CallID, Type: "function", Function: ToolFunction{Name: item.Name, Arguments: item.Arguments}}
+			call := ToolCall{
+				ID: item.CallID, Type: "function", Function: ToolFunction{Name: item.Name, Arguments: item.Arguments},
+				ExtraContent: item.ExtraContent,
+			}
 			if len(messages) > 0 && messages[len(messages)-1].Role == "assistant" {
 				messages[len(messages)-1].ToolCalls = append(messages[len(messages)-1].ToolCalls, call)
 			} else {
@@ -156,7 +159,7 @@ func responseOutputToInput(item ResponseOutputItem) ResponseInputItem {
 	return ResponseInputItem{
 		Type: item.Type, ID: item.ID, Role: item.Role, Status: item.Status,
 		Content: item.Content, CallID: item.CallID, Name: item.Name, Arguments: item.Arguments,
-		Summary: append([]any(nil), item.Summary...), EncryptedContent: item.EncryptedContent,
+		Summary: append([]any(nil), item.Summary...), EncryptedContent: item.EncryptedContent, ExtraContent: item.ExtraContent,
 	}
 }
 
@@ -246,7 +249,9 @@ func (c *Client) RunResponse(ctx context.Context, request ResponseRequest, opts 
 		toolResults := make([]ToolCallResult, 0, len(calls))
 		for _, call := range calls {
 			toolResult, err := runToolWithHandlers(ctx, handlers, call.CallID, call.Name, call.Arguments, ToolExecutionContext{
-				Step: step, ToolCall: ToolCall{ID: call.CallID, Type: "function", Function: ToolFunction{Name: call.Name, Arguments: call.Arguments}},
+				Step: step, ToolCall: ToolCall{
+					ID: call.CallID, Type: "function", Function: ToolFunction{Name: call.Name, Arguments: call.Arguments}, ExtraContent: call.ExtraContent,
+				},
 				Messages: responseInputToChat(input, request.Instructions),
 			})
 			if err != nil {

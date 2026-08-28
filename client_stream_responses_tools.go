@@ -101,7 +101,9 @@ func (c *Client) RunResponseStream(ctx context.Context, request ResponseRequest,
 		toolResults := make([]ToolCallResult, 0, len(calls))
 		for _, call := range calls {
 			toolResult, err := runToolWithHandlers(ctx, handlers, call.CallID, call.Name, call.Arguments, ToolExecutionContext{
-				Step: step, ToolCall: ToolCall{ID: call.CallID, Type: "function", Function: ToolFunction{Name: call.Name, Arguments: call.Arguments}},
+				Step: step, ToolCall: ToolCall{
+					ID: call.CallID, Type: "function", Function: ToolFunction{Name: call.Name, Arguments: call.Arguments}, ExtraContent: call.ExtraContent,
+				},
 				Messages: responseInputToChat(input, request.Instructions),
 			})
 			if err != nil {

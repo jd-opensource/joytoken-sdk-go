@@ -77,7 +77,10 @@ func toAnthropicRequest(request ModelRequest) joytoken.MessageRequest {
 				content = append(content, joytoken.MessageContentBlock{Type: "text", Text: text})
 			}
 			for _, call := range message.ToolCalls {
-				content = append(content, joytoken.MessageContentBlock{Type: "tool_use", ID: call.ID, Name: call.Function.Name, Input: parseToolInput(call.Function.Arguments)})
+				content = append(content, joytoken.MessageContentBlock{
+					Type: "tool_use", ID: call.ID, Name: call.Function.Name, Input: parseToolInput(call.Function.Arguments),
+					ExtraContent: call.ExtraContent,
+				})
 			}
 			appendAnthropicMessage(&messages, joytoken.MessageParam{Role: "assistant", Content: content})
 		default:
@@ -171,7 +174,10 @@ func normalizeAnthropicMessage(response *joytoken.MessageResponse) joytoken.Chat
 		}
 		if block.Type == "tool_use" && block.ID != "" && block.Name != "" {
 			arguments, _ := json.Marshal(block.Input)
-			toolCalls = append(toolCalls, joytoken.ToolCall{ID: block.ID, Type: "function", Function: joytoken.ToolFunction{Name: block.Name, Arguments: string(arguments)}})
+			toolCalls = append(toolCalls, joytoken.ToolCall{
+				ID: block.ID, Type: "function", Function: joytoken.ToolFunction{Name: block.Name, Arguments: string(arguments)},
+				ExtraContent: block.ExtraContent,
+			})
 		}
 	}
 	var content any

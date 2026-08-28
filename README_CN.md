@@ -137,6 +137,11 @@ result, err := runner.Run(ctx, "Summarize record 42")
 - `StreamChatCompletion`、`StreamResponse`、`StreamMessage` 是原始流，绝不执行调用方工具。
 - `RunChatCompletionStream`、`RunResponseStream`、`RunMessageStream` 通过 `OnTextDelta` 流式输出文本，并在轮次间执行同名工具直到闭环停止。
 
+模型返回的厂商扩展工具元数据保存在 `ToolCall.ExtraContent` 中，并由所有
+`Run*` 闭环和 Messages / Responses 适配原样带入续轮。例如 Gemini 的
+`extra_content.google.thought_signature` 不会在本地工具执行后丢失。手写循环时
+也应回填完整的 `ToolCall`，不要只复制 `id` 和 `function`。
+
 原始流原语(不执行工具):
 
 ```go

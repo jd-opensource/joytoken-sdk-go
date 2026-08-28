@@ -138,7 +138,10 @@ func messageInputToChat(request MessageRequest) []ChatMessage {
 					text += block.Text
 				case "tool_use":
 					arguments, _ := json.Marshal(block.Input)
-					calls = append(calls, ToolCall{ID: block.ID, Type: "function", Function: ToolFunction{Name: block.Name, Arguments: string(arguments)}})
+					calls = append(calls, ToolCall{
+						ID: block.ID, Type: "function", Function: ToolFunction{Name: block.Name, Arguments: string(arguments)},
+						ExtraContent: block.ExtraContent,
+					})
 				}
 			}
 			messages = append(messages, ChatMessage{Role: "assistant", Content: text, ToolCalls: calls})
@@ -245,7 +248,9 @@ func chatResponseToMessage(chat *ChatCompletionResponse) *MessageResponse {
 	for _, call := range choice.Message.ToolCalls {
 		input := map[string]any{}
 		_ = json.Unmarshal([]byte(call.Function.Arguments), &input)
-		response.Content = append(response.Content, MessageContentBlock{Type: "tool_use", ID: call.ID, Name: call.Function.Name, Input: input})
+		response.Content = append(response.Content, MessageContentBlock{
+			Type: "tool_use", ID: call.ID, Name: call.Function.Name, Input: input, ExtraContent: call.ExtraContent,
+		})
 	}
 	stopReason := chatStopReason(choice.FinishReason, len(choice.Message.ToolCalls) > 0)
 	response.StopReason = &stopReason
@@ -341,7 +346,9 @@ func (c *Client) RunMessage(ctx context.Context, request MessageRequest, opts Ru
 			executionRequest := stepRequest
 			executionRequest.Messages = messages
 			toolResult, err := runToolWithHandlers(ctx, handlers, block.ID, block.Name, string(arguments), ToolExecutionContext{
-				Step: step, ToolCall: ToolCall{ID: block.ID, Type: "function", Function: ToolFunction{Name: block.Name, Arguments: string(arguments)}},
+				Step: step, ToolCall: ToolCall{
+					ID: block.ID, Type: "function", Function: ToolFunction{Name: block.Name, Arguments: string(arguments)}, ExtraContent: block.ExtraContent,
+				},
 				Messages: messageInputToChat(executionRequest),
 			})
 			if err != nil {
@@ -399,7 +406,9 @@ func (c *Client) RunMessageStream(ctx context.Context, request MessageRequest, o
 			executionRequest := stepRequest
 			executionRequest.Messages = messages
 			toolResult, err := runToolWithHandlers(ctx, handlers, block.ID, block.Name, string(arguments), ToolExecutionContext{
-				Step: step, ToolCall: ToolCall{ID: block.ID, Type: "function", Function: ToolFunction{Name: block.Name, Arguments: string(arguments)}},
+				Step: step, ToolCall: ToolCall{
+					ID: block.ID, Type: "function", Function: ToolFunction{Name: block.Name, Arguments: string(arguments)}, ExtraContent: block.ExtraContent,
+				},
 				Messages: messageInputToChat(executionRequest),
 			})
 			if err != nil {
@@ -570,7 +579,9 @@ func (s *MessageStream) Recv() (*MessageStreamEvent, error) {
 				input := map[string]any{}
 				_ = json.Unmarshal([]byte(call.Function.Arguments), &input)
 				s.queue = append(s.queue,
-					&MessageStreamEvent{Type: "content_block_start", Index: messageIndex(index), ContentBlock: &MessageContentBlock{Type: "tool_use", ID: call.ID, Name: call.Function.Name, Input: input}},
+					&MessageStreamEvent{Type: "content_block_start", Index: messageIndex(index), ContentBlock: &MessageContentBlock{
+						Type: "tool_use", ID: call.ID, Name: call.Function.Name, Input: input, ExtraContent: call.ExtraContent,
+					}},
 					&MessageStreamEvent{Type: "content_block_stop", Index: messageIndex(index)},
 				)
 				index++

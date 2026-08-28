@@ -140,6 +140,12 @@ Streaming supports tool execution too. There are two levels:
 - `StreamChatCompletion`, `StreamResponse`, and `StreamMessage` are raw streams that never execute caller-owned tools.
 - `RunChatCompletionStream`, `RunResponseStream`, and `RunMessageStream` stream text via `OnTextDelta` **and** execute matching tools between turns until the loop stops.
 
+Opaque provider tool metadata is retained in `ToolCall.ExtraContent` and
+round-tripped by every `Run*` loop plus the Messages and Responses adapters.
+For example, Gemini's `extra_content.google.thought_signature` survives local
+tool execution. A manual loop should append the complete returned `ToolCall`
+instead of rebuilding only its `id` and `function` fields.
+
 Raw stream primitive (no tool execution):
 
 ```go

@@ -164,6 +164,12 @@ SDK 保留该事件并把 `Choices` 标准化为空切片；调用方应使用 `
 和 Responses 适配复用同一兜底。请求 ID 使用 `chunk.RequestID()`、
 `response.RequestID()` 或 `RequestIDFromMetadata` 获取。
 
+工具调用可能携带厂商要求在续轮原样返回的不透明扩展字段。SDK 将其保存在
+`ToolCall.ExtraContent`（以及 Messages / Responses 对应 item 的
+`ExtraContent`）中，并在非流式、流式和协议适配链路中原样回填。例如 Gemini
+工具调用使用 `extra_content.google.thought_signature` 维持多轮推理上下文。
+手写工具循环时应复用模型返回的完整 `ToolCall`，不要只重建 `id/function`。
+
 > 可见「流式」和「工具执行」并不互斥：原语 `StreamChatCompletion` 不执行工具，流式闭环 `RunChatCompletionStream` 则边流式边执行。
 >
 > Responses API 同样对称：原语 `StreamResponse` 不执行工具，流式闭环 `RunResponseStream(ctx, req, RunResponseStreamOptions)` 边流式边执行——每轮 SSE 抓 `response.output_text.delta` 逐 token 透传、`response.completed` 取完整 `Response` 提取 `function_call` 执行回填，逻辑与 Chat 流式同构。
