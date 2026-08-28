@@ -54,6 +54,15 @@ type ChatCompletionResponse struct {
 	Metadata map[string]any         `json:"metadata,omitempty"`
 }
 
+// RequestID returns the Gateway request ID carried in response metadata. The
+// SDK also copies a successful HTTP request ID header here when one is present.
+func (r *ChatCompletionResponse) RequestID() string {
+	if r == nil {
+		return ""
+	}
+	return RequestIDFromMetadata(r.Metadata)
+}
+
 // ChatCompletionChoice is one generated completion choice.
 type ChatCompletionChoice struct {
 	Index        int         `json:"index"`
@@ -62,7 +71,9 @@ type ChatCompletionChoice struct {
 	Logprobs     any         `json:"logprobs,omitempty"`
 }
 
-// ChatCompletionChunk is one streaming completion event.
+// ChatCompletionChunk is one streaming completion event. Gateway metadata and
+// usage events may have an empty Choices slice; callers must check len(Choices)
+// or range over it instead of indexing Choices[0] unconditionally.
 type ChatCompletionChunk struct {
 	ID       string                      `json:"id,omitempty"`
 	Object   string                      `json:"object,omitempty"`
@@ -71,6 +82,14 @@ type ChatCompletionChunk struct {
 	Choices  []ChatCompletionChunkChoice `json:"choices"`
 	Usage    *Usage                      `json:"usage,omitempty"`
 	Metadata map[string]any              `json:"metadata,omitempty"`
+}
+
+// RequestID returns the Gateway request ID carried by this stream event.
+func (c *ChatCompletionChunk) RequestID() string {
+	if c == nil {
+		return ""
+	}
+	return RequestIDFromMetadata(c.Metadata)
 }
 
 // ChatCompletionChunkChoice is one incremental streaming choice.
@@ -195,6 +214,14 @@ type Response struct {
 	IncompleteDetails map[string]any       `json:"incomplete_details,omitempty"`
 }
 
+// RequestID returns the Gateway request ID carried in response metadata.
+func (r *Response) RequestID() string {
+	if r == nil {
+		return ""
+	}
+	return RequestIDFromMetadata(r.Metadata)
+}
+
 func (r *Response) OutputText() string {
 	if r == nil {
 		return ""
@@ -223,6 +250,14 @@ type ResponseStreamEvent struct {
 	Text           string                 `json:"text,omitempty"`
 	Arguments      string                 `json:"arguments,omitempty"`
 	Error          map[string]any         `json:"error,omitempty"`
+}
+
+// RequestID returns the Gateway request ID from this event's response envelope.
+func (e *ResponseStreamEvent) RequestID() string {
+	if e == nil || e.Response == nil {
+		return ""
+	}
+	return e.Response.RequestID()
 }
 
 // ImageGenerationRequest is an OpenAI-compatible image generation request.
@@ -256,6 +291,14 @@ type ImageGenerationResponse struct {
 	Created  int64            `json:"created,omitempty"`
 	Data     []GeneratedImage `json:"data"`
 	Metadata map[string]any   `json:"metadata,omitempty"`
+}
+
+// RequestID returns the Gateway request ID carried in image metadata.
+func (r *ImageGenerationResponse) RequestID() string {
+	if r == nil {
+		return ""
+	}
+	return RequestIDFromMetadata(r.Metadata)
 }
 
 // Usage reports token and cost information for a request.
@@ -440,6 +483,14 @@ type MessageResponse struct {
 	Metadata     map[string]any        `json:"metadata,omitempty"`
 }
 
+// RequestID returns the Gateway request ID preserved by the Messages adapter.
+func (r *MessageResponse) RequestID() string {
+	if r == nil {
+		return ""
+	}
+	return RequestIDFromMetadata(r.Metadata)
+}
+
 type MessageStreamEvent struct {
 	Type         string               `json:"type"`
 	Index        *int                 `json:"index,omitempty"`
@@ -449,4 +500,18 @@ type MessageStreamEvent struct {
 	Usage        *MessageUsage        `json:"usage,omitempty"`
 	Error        map[string]any       `json:"error,omitempty"`
 	Metadata     map[string]any       `json:"metadata,omitempty"`
+}
+
+// RequestID returns the Gateway request ID from event metadata or its message.
+func (e *MessageStreamEvent) RequestID() string {
+	if e == nil {
+		return ""
+	}
+	if requestID := RequestIDFromMetadata(e.Metadata); requestID != "" {
+		return requestID
+	}
+	if e.Message != nil {
+		return e.Message.RequestID()
+	}
+	return ""
 }

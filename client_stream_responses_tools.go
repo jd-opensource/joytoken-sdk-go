@@ -16,9 +16,10 @@ type RunResponseStreamOptions struct {
 
 // ResponseStream reads native Responses SSE events from the gateway.
 type ResponseStream struct {
-	body    io.ReadCloser
-	scanner *bufio.Scanner
-	cancel  context.CancelFunc
+	body      io.ReadCloser
+	scanner   *bufio.Scanner
+	cancel    context.CancelFunc
+	requestID string
 }
 
 func (c *Client) StreamResponse(ctx context.Context, request ResponseRequest) (*ResponseStream, error) {
@@ -49,7 +50,7 @@ func (c *Client) StreamResponse(ctx context.Context, request ResponseRequest) (*
 		return nil, parseAPIError(res)
 	}
 
-	return &ResponseStream{body: res.Body, scanner: newSSEScanner(res.Body), cancel: cancel}, nil
+	return &ResponseStream{body: res.Body, scanner: newSSEScanner(res.Body), cancel: cancel, requestID: requestIDFromHeaders(res.Header)}, nil
 }
 
 func (s *ResponseStream) Recv() (*ResponseStreamEvent, error) {
@@ -57,6 +58,10 @@ func (s *ResponseStream) Recv() (*ResponseStreamEvent, error) {
 	if err := recvSSEJSON(s.scanner, &event); err != nil {
 		_ = s.Close()
 		return nil, err
+	}
+	normalizeResponse(event.Response, s.requestID)
+	if requestID := event.RequestID(); requestID != "" {
+		s.requestID = requestID
 	}
 	return &event, nil
 }
