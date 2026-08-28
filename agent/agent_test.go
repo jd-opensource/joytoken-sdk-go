@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	joytoken "github.com/jd-opensource/joytoken-sdk-go"
@@ -98,3 +99,73 @@ func (p *alwaysToolProvider) Complete(_ context.Context, _ ModelRequest) (ModelR
 }
 
 func float64Pointer(value float64) *float64 { return &value }
+
+// recoverProvider asks for a tool on the first turn and then finishes with a
+// plain answer, letting a test observe how a tool failure on step 1 is fed
+// back without aborting the run.
+type recoverProvider struct {
+	calls int
+}
+
+func (p *recoverProvider) Complete(_ context.Context, _ ModelRequest) (ModelResponse, error) {
+	p.calls++
+	if p.calls == 1 {
+		return ModelResponse{Message: joytoken.ChatMessage{
+			Role: "assistant",
+			ToolCalls: []joytoken.ToolCall{{
+				ID: "call_1", Type: "function", Function: joytoken.ToolFunction{Name: "boom", Arguments: `{}`},
+			}},
+		}}, nil
+	}
+	return ModelResponse{Message: joytoken.ChatMessage{Role: "assistant", Content: "recovered"}}, nil
+}
+
+func TestAgentFeedsToolErrorBackToModel(t *testing.T) {
+	provider := &recoverProvider{}
+	a := New(AgentOptions{
+		Model: provider,
+		Tools: []AgentTool{{
+			Name: "boom",
+			Execute: func(context.Context, any, ToolExecutionContext) (any, error) {
+				return nil, context.Canceled
+			},
+		}},
+	})
+
+	result, err := a.Run(context.Background(), "go")
+	if err != nil {
+		t.Fatalf("Run returned error, expected error fed back instead: %v", err)
+	}
+	if result.FinalText != "recovered" {
+		t.Fatalf("expected run to continue after tool error, got %q", result.FinalText)
+	}
+	first := result.Steps[0].ToolResults[0]
+	if !first.IsError || !strings.Contains(first.Content, "Tool error:") {
+		t.Fatalf("expected error tool result, got %#v", first)
+	}
+}
+
+func TestAgentRecoversToolPanic(t *testing.T) {
+	provider := &recoverProvider{}
+	a := New(AgentOptions{
+		Model: provider,
+		Tools: []AgentTool{{
+			Name: "boom",
+			Execute: func(context.Context, any, ToolExecutionContext) (any, error) {
+				panic("kaboom")
+			},
+		}},
+	})
+
+	result, err := a.Run(context.Background(), "go")
+	if err != nil {
+		t.Fatalf("Run returned error, expected panic recovered instead: %v", err)
+	}
+	if result.FinalText != "recovered" {
+		t.Fatalf("expected run to continue after panic, got %q", result.FinalText)
+	}
+	first := result.Steps[0].ToolResults[0]
+	if !first.IsError || !strings.Contains(first.Content, "panicked") {
+		t.Fatalf("expected panic tool result, got %#v", first)
+	}
+}

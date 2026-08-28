@@ -23,19 +23,24 @@ completion, err := client.CreateChatCompletion(ctx, joytoken.ChatCompletionReque
         {Role: "user", Content: "Say hello"},
     },
 })
+// completion 为 *ChatCompletionResponse(单次调用)。
+// 使用 RunChatCompletion 可跑工具闭环, 改读 RunChatResult。
 ```
 
 OpenAI Responses：
 
+`CreateResponse` 直接调用 Gateway 的原生 Responses 入口，完整保留 Responses
+工具、输出项、用量、标注和流式事件。
+
 ```go
-response, err := client.CreateResponse(ctx, joytoken.ResponseRequest{
+result, err := client.CreateResponse(ctx, joytoken.ResponseRequest{
     Model: joytoken.ModelAuto,
     Input: "Say hello",
 })
 if err != nil {
     return err
 }
-fmt.Println(response.OutputText())
+fmt.Println(result.OutputText())
 ```
 
 OpenAI Images：
@@ -54,6 +59,8 @@ fmt.Println(image.Data[0].URL)
 
 Anthropic Messages：
 
+`CreateMessage` 同样是基于唯一 Chat Completions Gateway 入口的协议适配层。
+
 ```go
 message, err := client.CreateMessage(ctx, joytoken.MessageRequest{
     Model:     joytoken.ModelAuto,
@@ -68,11 +75,9 @@ message, err := client.CreateMessage(ctx, joytoken.MessageRequest{
 
 - `POST /openai/v1/chat/completions`
 - 基于 SSE 的流式 Chat Completions
-- `POST /openai/v1/responses`
-- 基于 SSE 的流式 Responses 文本事件
+- `POST /openai/v1/responses` 及原生 Responses SSE
 - `POST /openai/v1/images/generations`
-- `POST /anthropic/v1/messages`
-- 基于 SSE 的流式 Anthropic Messages
+- Anthropic Messages 兼容请求、响应及流式事件适配
 - `GET /api/v1/models`
 - `GET /api/v1/models/meta`
 - `GET /api/v1/pricing`
@@ -121,7 +126,18 @@ result, err := runner.Run(ctx, "Summarize record 42")
 
 每次运行默认最多执行 8 个模型步骤。可以通过 `RunWithOptions` 设置 `MaxSteps: agent.Int(6)`，也可以添加 `StepCountIs`、`MaxToolCalls` 和 `MaxCost` 等停止条件。
 
+想直接用一套带权限与中间件、开箱即用的安全工具集？可用 `toolkit.NewAgent(...)`
+获得零配置默认工具，或显式注册宿主配置类工具（文件/HTTP/SQL）并配上审批回调。
+详见 [`agent/README.md`](agent/README.md#built-in-toolkit-optional)。
+
 ## 流式调用
+
+流式同样支持工具执行，分两个层次：
+
+- `StreamChatCompletion`、`StreamResponse`、`StreamMessage` 是原始流，绝不执行调用方工具。
+- `RunChatCompletionStream`、`RunResponseStream`、`RunMessageStream` 通过 `OnTextDelta` 流式输出文本，并在轮次间执行同名工具直到闭环停止。
+
+原始流原语(不执行工具):
 
 ```go
 stream, err := client.StreamChatCompletion(ctx, joytoken.ChatCompletionRequest{
@@ -141,17 +157,23 @@ for {
     if err != nil {
         return err
     }
-    fmt.Print(chunk.Choices[0].Delta["content"])
+	for _, choice := range chunk.Choices {
+		if text, ok := choice.Delta["content"].(string); ok {
+			fmt.Print(text)
+		}
+	}
 }
 ```
 
-`StreamMessage` 为 Anthropic Messages 提供相同的迭代模式。调用方提前停止消费流时，应始终关闭流。
+`StreamMessage` 为 Anthropic Messages 提供原始事件迭代；需要流式工具闭环时使用 `RunMessageStream`。调用方提前停止消费原始流时，应始终关闭流。
 
 ## 错误处理
 
 调用需要鉴权的模型接口、模型元数据和价格接口时，如果未配置 API Key，SDK 会在发送网络请求前返回 `joytoken.ErrMissingAPIKey`。只有 `ListModels` 是无需鉴权的模型目录接口。
 
 HTTP 请求失败时会返回 `*joytoken.APIError`。可以使用 `joytoken.IsAPIError(err)` 或 `errors.As` 获取状态码、请求 ID、响应头和解析后的响应体。Agent 包会将 Provider 和工具执行错误原样返回给调用方。
+
+显式 `Run*` 方法如果在后续模型轮次失败，会同时返回错误和部分结果。调用方可以从 `Steps` 以及已累积的 `Messages` 或 `Input` 中保留已经完成的工具工作和诊断信息。
 
 ## 验证
 

@@ -1,5 +1,5 @@
 // Package joytoken provides a Go client for the JoyToken API.
 //
-// It supports OpenAI-compatible Chat Completions, Anthropic-compatible
-// Messages, streaming responses, model discovery, and pricing metadata.
+// It supports the gateway's native OpenAI-compatible Chat Completions and
+// Responses endpoints plus a local Anthropic Messages adapter.
 package joytoken

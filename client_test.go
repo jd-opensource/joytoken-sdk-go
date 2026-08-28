@@ -59,59 +59,6 @@ func TestStreamChatCompletion(t *testing.T) {
 	}
 }
 
-func TestCreateResponse(t *testing.T) {
-	server := newMockServer(t)
-	defer server.Close()
-
-	client := NewClient(WithAPIKey("test-key"), WithOpenAIBaseURL(server.URL+"/openai/v1"))
-	maxTokens := 128
-	response, err := client.CreateResponse(context.Background(), ResponseRequest{
-		Model:           ModelAuto,
-		Input:           "hello",
-		Instructions:    "Be concise",
-		MaxOutputTokens: &maxTokens,
-	})
-	if err != nil {
-		t.Fatalf("CreateResponse returned error: %v", err)
-	}
-	if got := response.OutputText(); got != "hello" {
-		t.Fatalf("expected hello, got %q", got)
-	}
-	if response.Usage == nil || response.Usage.InputTokens != 1 {
-		t.Fatalf("unexpected usage: %#v", response.Usage)
-	}
-}
-
-func TestStreamResponse(t *testing.T) {
-	server := newMockServer(t)
-	defer server.Close()
-
-	client := NewClient(WithAPIKey("test-key"), WithOpenAIBaseURL(server.URL+"/openai/v1"))
-	stream, err := client.StreamResponse(context.Background(), ResponseRequest{Model: ModelAuto, Input: "hello"})
-	if err != nil {
-		t.Fatalf("StreamResponse returned error: %v", err)
-	}
-	defer stream.Close()
-
-	events := make([]*ResponseStreamEvent, 0)
-	for {
-		event, recvErr := stream.Recv()
-		if errors.Is(recvErr, io.EOF) {
-			break
-		}
-		if recvErr != nil {
-			t.Fatalf("Recv returned error: %v", recvErr)
-		}
-		events = append(events, event)
-	}
-	if len(events) != 4 || events[0].Type != "response.created" || events[1].Type != "response.output_text.delta" || events[3].Type != "response.completed" {
-		t.Fatalf("unexpected Responses events: %#v", events)
-	}
-	if events[1].Delta != "hello" || events[3].Response == nil {
-		t.Fatalf("unexpected event payloads: %#v", events)
-	}
-}
-
 func TestGenerateImage(t *testing.T) {
 	server := newMockServer(t)
 	defer server.Close()
@@ -194,61 +141,6 @@ func TestStreamChatCompletionHandlesMultilineSSEEvent(t *testing.T) {
 	}
 	if got := chunk.Choices[0].Delta["content"]; got != "hello" {
 		t.Fatalf("expected hello, got %v", got)
-	}
-}
-
-func TestCreateMessage(t *testing.T) {
-	server := newMockServer(t)
-	defer server.Close()
-
-	client := NewClient(WithAPIKey("test-key"), WithAPIBaseURL(server.URL), WithAnthropicBaseURL(server.URL+"/anthropic/v1"))
-	temperature := 0.7
-	response, err := client.CreateMessage(context.Background(), MessageRequest{
-		Model:       ModelAuto,
-		MaxTokens:   128,
-		Temperature: &temperature,
-		Tier:        "standard",
-		Messages: []MessageParam{
-			{Role: "user", Content: "hello"},
-		},
-	})
-	if err != nil {
-		t.Fatalf("CreateMessage returned error: %v", err)
-	}
-	if got := response.Content[0].Text; got != "hello" {
-		t.Fatalf("expected hello, got %v", got)
-	}
-}
-
-func TestStreamMessage(t *testing.T) {
-	server := newMockServer(t)
-	defer server.Close()
-
-	client := NewClient(WithAPIKey("test-key"), WithAPIBaseURL(server.URL), WithAnthropicBaseURL(server.URL+"/anthropic/v1"))
-	temperature := 0.7
-	stream, err := client.StreamMessage(context.Background(), MessageRequest{
-		Model:       ModelAuto,
-		MaxTokens:   128,
-		Temperature: &temperature,
-		Tier:        "standard",
-		Messages: []MessageParam{
-			{Role: "user", Content: "hello"},
-		},
-	})
-	if err != nil {
-		t.Fatalf("StreamMessage returned error: %v", err)
-	}
-	defer stream.Close()
-
-	event, err := stream.Recv()
-	if err != nil {
-		t.Fatalf("Recv returned error: %v", err)
-	}
-	if event.Type != "content_block_delta" || event.Delta["text"] != "hello" {
-		t.Fatalf("unexpected event: %#v", event)
-	}
-	if _, err := stream.Recv(); !errors.Is(err, io.EOF) {
-		t.Fatalf("expected EOF, got %v", err)
 	}
 }
 
@@ -381,23 +273,9 @@ func TestAuthenticatedRequestsRequireAPIKey(t *testing.T) {
 			},
 		},
 		{
-			name: "responses stream",
-			call: func() error {
-				_, err := client.StreamResponse(ctx, ResponseRequest{Model: "auto", Input: "hello"})
-				return err
-			},
-		},
-		{
 			name: "images",
 			call: func() error {
 				_, err := client.GenerateImage(ctx, ImageGenerationRequest{Model: "auto", Prompt: "hello"})
-				return err
-			},
-		},
-		{
-			name: "messages",
-			call: func() error {
-				_, err := client.CreateMessage(ctx, MessageRequest{Model: "auto", MaxTokens: 16})
 				return err
 			},
 		},
@@ -442,24 +320,8 @@ func TestModelRequestsRequireAuto(t *testing.T) {
 			_, err := client.StreamChatCompletion(ctx, ChatCompletionRequest{Model: "unsupported-model"})
 			return err
 		}},
-		{name: "responses", call: func() error {
-			_, err := client.CreateResponse(ctx, ResponseRequest{Model: "unsupported-model", Input: "hello"})
-			return err
-		}},
-		{name: "responses stream", call: func() error {
-			_, err := client.StreamResponse(ctx, ResponseRequest{Model: "unsupported-model", Input: "hello"})
-			return err
-		}},
 		{name: "images", call: func() error {
 			_, err := client.GenerateImage(ctx, ImageGenerationRequest{Model: "unsupported-model", Prompt: "hello"})
-			return err
-		}},
-		{name: "messages", call: func() error {
-			_, err := client.CreateMessage(ctx, MessageRequest{Model: "unsupported-model", MaxTokens: 16})
-			return err
-		}},
-		{name: "messages stream", call: func() error {
-			_, err := client.StreamMessage(ctx, MessageRequest{Model: "unsupported-model", MaxTokens: 16})
 			return err
 		}},
 	}
@@ -482,11 +344,6 @@ func TestSDKAuthenticationAndRequestHeadersTakePrecedence(t *testing.T) {
 				t.Errorf("unexpected OpenAI authentication headers: %#v", r.Header)
 			}
 			_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"hello"}}]}`))
-		case "/anthropic/v1/messages":
-			if r.Header.Get("Authorization") != "" || r.Header.Get("x-api-key") != "test-key" || r.Header.Get("anthropic-version") != "2023-06-01" {
-				t.Errorf("unexpected Anthropic headers: %#v", r.Header)
-			}
-			_, _ = w.Write([]byte(`{"id":"msg_test","type":"message","role":"assistant","content":[{"type":"text","text":"hello"}],"model":"auto","usage":{"input_tokens":1,"output_tokens":1}}`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -496,16 +353,11 @@ func TestSDKAuthenticationAndRequestHeadersTakePrecedence(t *testing.T) {
 	client := NewClient(
 		WithAPIKey("test-key"),
 		WithOpenAIBaseURL(server.URL+"/openai/v1"),
-		WithAnthropicBaseURL(server.URL+"/anthropic/v1"),
 		WithHeader("Authorization", "Bearer custom"),
 		WithHeader("x-api-key", "custom-key"),
-		WithHeader("anthropic-version", "custom-version"),
 	)
 	if _, err := client.CreateChatCompletion(context.Background(), ChatCompletionRequest{Model: "auto"}); err != nil {
 		t.Fatalf("CreateChatCompletion returned error: %v", err)
-	}
-	if _, err := client.CreateMessage(context.Background(), MessageRequest{Model: "auto", MaxTokens: 16}); err != nil {
-		t.Fatalf("CreateMessage returned error: %v", err)
 	}
 }
 
@@ -519,13 +371,7 @@ func newMockServer(t *testing.T) *httptest.Server {
 			return
 		}
 
-		isAnthropic := r.URL.Path == "/anthropic/v1/messages"
 		validAuth := r.Header.Get("Authorization") == "Bearer test-key"
-		if isAnthropic {
-			validAuth = r.Header.Get("x-api-key") == "test-key" &&
-				r.Header.Get("anthropic-version") == "2023-06-01" &&
-				r.Header.Get("Authorization") == ""
-		}
 		if !validAuth {
 			w.WriteHeader(http.StatusUnauthorized)
 			_, _ = w.Write([]byte(`{"error":{"message":"missing api key"}}`))
@@ -558,25 +404,6 @@ func newMockServer(t *testing.T) *httptest.Server {
 				},
 				Usage: &Usage{PromptTokens: 1, CompletionTokens: 1, TotalTokens: 2},
 			})
-		case r.Method == http.MethodPost && r.URL.Path == "/openai/v1/responses":
-			var payload ResponseRequest
-			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-				t.Errorf("decode Responses request: %v", err)
-			}
-			if payload.Stream {
-				w.Header().Set("Content-Type", "text/event-stream")
-				_, _ = w.Write([]byte("event: response.created\ndata: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_test\",\"object\":\"response\",\"status\":\"in_progress\",\"model\":\"auto\"}}\n\n"))
-				_, _ = w.Write([]byte("event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"sequence_number\":1,\"delta\":\"hello\",\"item_id\":\"resp_test-msg\"}\n\n"))
-				_, _ = w.Write([]byte("event: response.output_text.done\ndata: {\"type\":\"response.output_text.done\",\"sequence_number\":2,\"text\":\"hello\"}\n\n"))
-				_, _ = w.Write([]byte("event: response.completed\ndata: {\"type\":\"response.completed\",\"sequence_number\":3,\"response\":{\"id\":\"resp_test\",\"object\":\"response\",\"status\":\"completed\",\"model\":\"auto\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hello\"}]}]}}\n\n"))
-				return
-			}
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(Response{
-				ID: "resp_test", Object: "response", Status: "completed", Model: "auto",
-				Output: []ResponseOutputItem{{Type: "message", Role: "assistant", Status: "completed", Content: []ResponseOutputContent{{Type: "output_text", Text: "hello"}}}},
-				Usage:  &ResponseUsage{InputTokens: 1, OutputTokens: 1, TotalTokens: 2},
-			})
 		case r.Method == http.MethodPost && r.URL.Path == "/openai/v1/images/generations":
 			var payload ImageGenerationRequest
 			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
@@ -593,30 +420,6 @@ func newMockServer(t *testing.T) *httptest.Server {
 					RevisedPrompt: payload.Prompt,
 				}},
 				Metadata: map[string]any{"usage": map[string]any{"credits_used": "1.25"}},
-			})
-		case r.Method == http.MethodPost && r.URL.Path == "/anthropic/v1/messages":
-			var payload MessageRequest
-			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-				t.Errorf("decode request: %v", err)
-			}
-			if payload.Temperature == nil || *payload.Temperature != 0.7 || payload.Tier != "standard" {
-				t.Errorf("unexpected Anthropic request options: temperature=%v tier=%q", payload.Temperature, payload.Tier)
-			}
-			if payload.Stream {
-				w.Header().Set("Content-Type", "text/event-stream")
-				_, _ = w.Write([]byte("event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hello\"}}\n\n"))
-				return
-			}
-			stopReason := "end_turn"
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(MessageResponse{
-				ID:         "msg_test",
-				Type:       "message",
-				Role:       "assistant",
-				Content:    []MessageContentBlock{{Type: "text", Text: "hello"}},
-				Model:      "auto",
-				StopReason: &stopReason,
-				Usage:      MessageUsage{InputTokens: 1, OutputTokens: 1},
 			})
 		default:
 			w.WriteHeader(http.StatusNotFound)

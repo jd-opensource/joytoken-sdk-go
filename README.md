@@ -23,19 +23,24 @@ completion, err := client.CreateChatCompletion(ctx, joytoken.ChatCompletionReque
         {Role: "user", Content: "Say hello"},
     },
 })
+// completion is *ChatCompletionResponse (single-shot).
+// Use RunChatCompletion to run the tool loop and read the RunChatResult instead.
 ```
 
 OpenAI Responses:
 
+`CreateResponse` uses the gateway's native Responses endpoint, preserving
+Responses tools, output items, usage, annotations, and streaming events.
+
 ```go
-response, err := client.CreateResponse(ctx, joytoken.ResponseRequest{
+result, err := client.CreateResponse(ctx, joytoken.ResponseRequest{
     Model: joytoken.ModelAuto,
     Input: "Say hello",
 })
 if err != nil {
     return err
 }
-fmt.Println(response.OutputText())
+fmt.Println(result.OutputText())
 ```
 
 OpenAI Images:
@@ -54,6 +59,9 @@ fmt.Println(image.Data[0].URL)
 
 Anthropic Messages:
 
+`CreateMessage` is also a local protocol adapter over the single Chat
+Completions gateway endpoint.
+
 ```go
 message, err := client.CreateMessage(ctx, joytoken.MessageRequest{
     Model:     joytoken.ModelAuto,
@@ -68,11 +76,9 @@ The client supports:
 
 - `POST /openai/v1/chat/completions`
 - streaming chat completions via SSE
-- `POST /openai/v1/responses`
-- streaming Responses text events via SSE
+- `POST /openai/v1/responses` and native Responses SSE
 - `POST /openai/v1/images/generations`
-- `POST /anthropic/v1/messages`
-- streaming Anthropic Messages via SSE
+- Anthropic Messages-compatible request/response and streaming adapters
 - `GET /api/v1/models`
 - `GET /api/v1/models/meta`
 - `GET /api/v1/pricing`
@@ -123,7 +129,18 @@ result, err := runner.Run(ctx, "Summarize record 42")
 
 Every run has a hard eight-step limit by default. Use `RunWithOptions` with `MaxSteps: agent.Int(6)` or add `StepCountIs`, `MaxToolCalls`, and `MaxCost` conditions.
 
+Prefer a ready-made, safe tool set with built-in permissions and middleware? Use
+`toolkit.NewAgent(...)` for zero-config defaults, or register host-configured
+tools (file/HTTP/SQL) with an approval callback. See [`agent/README.md`](agent/README.md#built-in-toolkit-optional).
+
 ## Streaming
+
+Streaming supports tool execution too. There are two levels:
+
+- `StreamChatCompletion`, `StreamResponse`, and `StreamMessage` are raw streams that never execute caller-owned tools.
+- `RunChatCompletionStream`, `RunResponseStream`, and `RunMessageStream` stream text via `OnTextDelta` **and** execute matching tools between turns until the loop stops.
+
+Raw stream primitive (no tool execution):
 
 ```go
 stream, err := client.StreamChatCompletion(ctx, joytoken.ChatCompletionRequest{
@@ -143,17 +160,23 @@ for {
     if err != nil {
         return err
     }
-    fmt.Print(chunk.Choices[0].Delta["content"])
+	for _, choice := range chunk.Choices {
+		if text, ok := choice.Delta["content"].(string); ok {
+			fmt.Print(text)
+		}
+	}
 }
 ```
 
-`StreamMessage` exposes the same iterator pattern for Anthropic Messages. Always close a stream when the consumer stops early.
+`StreamMessage` exposes the same raw iterator pattern for Anthropic Messages; use `RunMessageStream` for its streaming tool loop. Always close a raw stream when the consumer stops early.
 
 ## Errors
 
 Authenticated model calls, model metadata and pricing requests return `joytoken.ErrMissingAPIKey` before sending a network request when no API key is configured. `ListModels` remains the unauthenticated catalog call.
 
 HTTP failures are returned as `*joytoken.APIError`. Use `joytoken.IsAPIError(err)` or `errors.As` to inspect the status code, request ID, response headers, and parsed response body. The Agent package returns provider and tool errors to the caller without hiding them.
+
+Explicit `Run*` methods return the partial result together with an error when a later model turn fails. Inspect `Steps` and the accumulated `Messages` or `Input` to retain already completed tool work and diagnostics.
 
 ## Validate
 

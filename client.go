@@ -8,9 +8,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -20,6 +22,18 @@ const (
 	sdkVersion        = "0.2.0"
 	maxSSETokenSize   = 16 * 1024 * 1024
 	defaultTimeout    = 60 * time.Second
+
+	// Model requests are non-idempotent and may already have reached the provider
+	// when a transport or gateway error is observed. Keep automatic retries off by
+	// default to avoid duplicate model calls, duplicate billing, and amplifying a
+	// provider-side circuit breaker. Callers may opt in with WithMaxRetries when
+	// their workflow supplies an appropriate idempotency strategy.
+	defaultMaxRetries = 0
+	// retryBaseDelay and retryMaxDelay bound the exponential backoff between
+	// retries. Actual sleeps add jitter and honor a Retry-After response header
+	// when the server sends one.
+	retryBaseDelay = 500 * time.Millisecond
+	retryMaxDelay  = 8 * time.Second
 )
 
 // ErrMissingAPIKey is returned when an authenticated endpoint is called
@@ -33,14 +47,63 @@ type HTTPClient interface {
 
 // Client is a reusable, concurrency-safe JoyToken API client.
 type Client struct {
-	apiKey           string
-	apiBaseURL       string
-	openAIBaseURL    string
-	anthropicBaseURL string
-	anthropicVersion string
-	httpClient       HTTPClient
-	defaultHeader    http.Header
-	timeout          time.Duration
+	apiKey        string
+	apiBaseURL    string
+	openAIBaseURL string
+	httpClient    HTTPClient
+	defaultHeader http.Header
+	timeout       time.Duration
+
+	// maxRetries is how many times a transient request failure (HTTP 429/5xx
+	// or a transport error) is retried with exponential backoff before the
+	// error is surfaced. Zero disables retries. Configured with WithMaxRetries.
+	maxRetries int
+
+	// tools holds handlers registered via WithTools/WithToolHandler. Supplying
+	// any registered tool replaces the SDK default set. Primitive Create/Stream
+	// methods forward user-owned tool calls; explicit Run methods execute them.
+	tools     map[string]Tool
+	toolOrder []string
+
+	// defaultLocalTools controls the SDK fallback set used only when the caller
+	// supplied no tools. Read/compute tools run locally; file_write and shell are
+	// permission-gated. defaultBuiltinTools controls hosted Responses defaults.
+	defaultLocalTools   bool
+	defaultBuiltinTools bool
+
+	// excludedDefaultTools names default tools (local or gateway built-in) to
+	// skip when injecting the default set, keyed by tool/type name. It gives
+	// per-tool opt-out on top of the coarse defaultLocalTools/defaultBuiltinTools
+	// switches, e.g. dropping just "shell" while keeping the rest. It never
+	// affects tools the caller registered explicitly via WithTools. Configured
+	// with WithoutDefaultTools.
+	excludedDefaultTools map[string]bool
+
+	// fileWorkspaceRoot is the sandbox root for the default file tools. Empty
+	// means the current working directory (os.Getwd), which most closely
+	// matches the Codex/Claude "project workspace" model and keeps the exposed
+	// surface minimal. It can be overridden with WithFileWorkspace.
+	fileWorkspaceRoot string
+
+	// filePermission, when non-nil, allows the default file_write tool to run.
+	// Read and exploration tools (file_search, list_dir, file_read) are always
+	// available, and file_write is always declared to the model too; writes have
+	// real side effects, so every write is gated. With no callback (this field
+	// nil), the file_write declaration is still sent but writes are refused at
+	// execution time. Supply the callback via WithFilePermission to allow writes.
+	filePermission FilePermissionFunc
+
+	// shellWorkingDir is the directory the default shell tool runs commands in.
+	// Empty means the current working directory (os.Getwd), matching the file
+	// tools' project-workspace model. It can be overridden with WithShellWorkspace.
+	shellWorkingDir string
+
+	// shellPermission, when non-nil, allows the default shell tool to run. The
+	// shell tool is always declared to the model, but because a shell command has
+	// unbounded side effects every invocation is gated. With no callback (this
+	// field nil), the shell declaration is still sent but commands are refused at
+	// execution time. Supply the callback via WithShellPermission to allow commands.
+	shellPermission ShellPermissionFunc
 }
 
 // Option configures a Client.
@@ -53,10 +116,14 @@ func WithAPIKey(apiKey string) Option {
 	}
 }
 
-// WithAPIBaseURL configures the base URL for model and pricing endpoints.
+// WithAPIBaseURL configures the common JoyToken base URL. Because the gateway
+// has one model entry point, it also derives openAIBaseURL as
+// <base>/openai/v1. A later WithOpenAIBaseURL call may override it explicitly.
 func WithAPIBaseURL(apiBaseURL string) Option {
 	return func(c *Client) {
-		c.apiBaseURL = trimTrailingSlash(apiBaseURL)
+		baseURL := trimTrailingSlash(apiBaseURL)
+		c.apiBaseURL = baseURL
+		c.openAIBaseURL = baseURL + "/openai/v1"
 	}
 }
 
@@ -67,19 +134,16 @@ func WithOpenAIBaseURL(openAIBaseURL string) Option {
 	}
 }
 
-// WithAnthropicBaseURL configures the Anthropic-compatible API base URL.
-func WithAnthropicBaseURL(anthropicBaseURL string) Option {
-	return func(c *Client) {
-		c.anthropicBaseURL = trimTrailingSlash(anthropicBaseURL)
-	}
-}
+// WithAnthropicBaseURL is retained for source compatibility. Anthropic
+// Messages is now a local adapter over the gateway's single Chat Completions
+// endpoint, so there is no separate Anthropic URL to configure.
+// Deprecated: configure WithOpenAIBaseURL or WithAPIBaseURL instead.
+func WithAnthropicBaseURL(_ string) Option { return func(*Client) {} }
 
-// WithAnthropicVersion configures the anthropic-version request header.
-func WithAnthropicVersion(anthropicVersion string) Option {
-	return func(c *Client) {
-		c.anthropicVersion = anthropicVersion
-	}
-}
+// WithAnthropicVersion is retained for source compatibility. No Anthropic HTTP
+// request is emitted by this SDK adapter.
+// Deprecated: the value is ignored.
+func WithAnthropicVersion(_ string) Option { return func(*Client) {} }
 
 // WithHTTPClient configures the HTTP transport used by the client.
 func WithHTTPClient(httpClient HTTPClient) Option {
@@ -97,6 +161,23 @@ func WithTimeout(timeout time.Duration) Option {
 	}
 }
 
+// WithMaxRetries configures how many times a transient request failure is
+// retried before the error is returned. Transient failures are HTTP 429 and
+// 5xx responses and low-level transport errors; 4xx responses (except 429) are
+// never retried because they will not succeed on replay. Retries use bounded
+// exponential backoff with jitter and honor a Retry-After response header when
+// present. Model requests are not inherently idempotent, so retries are disabled
+// by default and should be enabled only when the caller accepts that risk. A
+// negative value is treated as zero.
+func WithMaxRetries(maxRetries int) Option {
+	return func(c *Client) {
+		if maxRetries < 0 {
+			maxRetries = 0
+		}
+		c.maxRetries = maxRetries
+	}
+}
+
 // WithHeader adds a header to every request. Later calls replace the same key.
 func WithHeader(key, value string) Option {
 	return func(c *Client) {
@@ -104,18 +185,88 @@ func WithHeader(key, value string) Option {
 	}
 }
 
+// WithTools registers executable tools on the client. A non-empty registered
+// set replaces the SDK defaults. Primitive Create/Stream methods only expose
+// and forward these user-owned tools; explicit Run methods execute them. Later
+// registrations with the same name replace earlier ones while preserving
+// first-seen ordering.
+func WithTools(tools ...Tool) Option {
+	return func(c *Client) {
+		for _, t := range tools {
+			c.registerTool(t)
+		}
+	}
+}
+
+// WithToolHandler registers a single named executable tool. It is a convenience
+// wrapper over WithTools for the common case of attaching one handler.
+func WithToolHandler(name, description string, parameters map[string]any, execute ToolExecuteFunc) Option {
+	return WithTools(Tool{
+		Name:        name,
+		Description: description,
+		Parameters:  parameters,
+		Execute:     execute,
+	})
+}
+
+// WithDefaultLocalTools controls the SDK fallback tool set used when the caller
+// supplies no request-level or registered tools. It includes compute/read tools
+// plus permission-gated file_write and shell. Pass false to disable it.
+func WithDefaultLocalTools(enabled bool) Option {
+	return func(c *Client) {
+		c.defaultLocalTools = enabled
+	}
+}
+
+// WithDefaultBuiltinTools controls whether zero-config hosted Responses tools
+// are sent when the caller supplied no tools. It is disabled by default because
+// hosted tools may carry separate provider availability and billing semantics.
+// Currently web_search_preview is the only opt-in hosted default; file_search
+// still requires caller-provided vector_store_ids. Explicit request tools are
+// always forwarded unchanged.
+func WithDefaultBuiltinTools(enabled bool) Option {
+	return func(c *Client) {
+		c.defaultBuiltinTools = enabled
+	}
+}
+
+// WithoutDefaultTools excludes specific default tools by name, giving per-tool
+// opt-out on top of the coarse WithDefaultLocalTools/WithDefaultBuiltinTools
+// switches. Names match the tool's declared name for local tools (e.g.
+// "shell", "file_write", "calculator") and the Type for gateway built-in tools
+// (e.g. "web_search_preview"). Excluded tools are neither declared nor executed.
+// It never affects tools the caller registered explicitly via WithTools/
+// WithToolHandler; those always win. Calling it multiple times accumulates.
+func WithoutDefaultTools(names ...string) Option {
+	return func(c *Client) {
+		if c.excludedDefaultTools == nil {
+			c.excludedDefaultTools = make(map[string]bool, len(names))
+		}
+		for _, n := range names {
+			if n != "" {
+				c.excludedDefaultTools[n] = true
+			}
+		}
+	}
+}
+
 // NewClient creates a JoyToken client from environment defaults and options.
 func NewClient(opts ...Option) *Client {
 	apiBaseURL := getenv("JOY_TOKEN_API_BASE_URL", defaultAPIBaseURL)
 	client := &Client{
-		apiKey:           os.Getenv("JOY_TOKEN_API_KEY"),
-		apiBaseURL:       trimTrailingSlash(apiBaseURL),
-		openAIBaseURL:    trimTrailingSlash(getenv("JOY_TOKEN_OPENAI_BASE_URL", apiBaseURL+"/openai/v1")),
-		anthropicBaseURL: trimTrailingSlash(getenv("JOY_TOKEN_ANTHROPIC_BASE_URL", apiBaseURL+"/anthropic/v1")),
-		anthropicVersion: "2023-06-01",
-		httpClient:       &http.Client{},
-		defaultHeader:    make(http.Header),
-		timeout:          defaultTimeout,
+		apiKey:        os.Getenv("JOY_TOKEN_API_KEY"),
+		apiBaseURL:    trimTrailingSlash(apiBaseURL),
+		openAIBaseURL: trimTrailingSlash(getenv("JOY_TOKEN_OPENAI_BASE_URL", apiBaseURL+"/openai/v1")),
+		httpClient:    &http.Client{},
+		defaultHeader: make(http.Header),
+		timeout:       defaultTimeout,
+		maxRetries:    defaultMaxRetries,
+
+		// Local fallbacks are enabled out of the box but selected only when the
+		// caller supplied no request-level or registered tools. Hosted Responses
+		// tools are opt-in because the selected Chat upstream may not support them.
+		defaultLocalTools:   true,
+		defaultBuiltinTools: false,
 	}
 
 	for _, opt := range opts {
@@ -125,8 +276,28 @@ func NewClient(opts ...Option) *Client {
 	return client
 }
 
-// CreateChatCompletion creates a non-streaming OpenAI-compatible completion.
+// CreateChatCompletion sends an OpenAI-compatible Chat Completions request to
+// the gateway's single model endpoint. Request-level tools, including an
+// explicitly empty slice, are forwarded unchanged. Tools registered with
+// WithTools are also user-owned and are forwarded without automatic execution.
+// Only when the caller supplied no tools at either level does the client inject
+// and execute its default fallback tools.
 func (c *Client) CreateChatCompletion(ctx context.Context, request ChatCompletionRequest) (*ChatCompletionResponse, error) {
+	if request.Tools != nil || len(c.toolOrder) > 0 {
+		return c.createChatCompletionOnce(ctx, request)
+	}
+	run, err := c.runChatCompletion(ctx, request, RunChatOptions{}, nil)
+	if err != nil {
+		return nil, err
+	}
+	return run.finalResponse(nil), nil
+}
+
+// createChatCompletionOnce performs exactly one non-streaming Chat Completions
+// round-trip with the effective tools injected. It never executes tool_calls,
+// so the RunChatCompletion loop uses it as its single-shot primitive without
+// recursing back into the auto-executing CreateChatCompletion.
+func (c *Client) createChatCompletionOnce(ctx context.Context, request ChatCompletionRequest) (*ChatCompletionResponse, error) {
 	if err := validateAutoModel(request.Model); err != nil {
 		return nil, err
 	}
@@ -134,6 +305,12 @@ func (c *Client) CreateChatCompletion(ctx context.Context, request ChatCompletio
 		return nil, err
 	}
 	request.Stream = false
+	// Resolve tools once for this wire request. Request-level declarations are
+	// copied unchanged; registered tools replace the defaults; defaults are used
+	// only when neither source was supplied. Tool declarations remain available
+	// on continuation turns so the model can make another tool call, and so an
+	// external caller's explicit tools are never silently removed.
+	request.Tools = c.chatTools(request)
 	var response ChatCompletionResponse
 	if err := c.requestJSON(ctx, http.MethodPost, c.openAIBaseURL+"/chat/completions", request, &response); err != nil {
 		return nil, err
@@ -151,6 +328,7 @@ func (c *Client) StreamChatCompletion(ctx context.Context, request ChatCompletio
 		return nil, err
 	}
 	request.Stream = true
+	request.Tools = c.chatTools(request)
 	requestCtx, cancel := c.withTimeout(ctx)
 	req, err := c.newJSONRequest(requestCtx, http.MethodPost, c.openAIBaseURL+"/chat/completions", request)
 	if err != nil {
@@ -177,58 +355,6 @@ func (c *Client) StreamChatCompletion(ctx context.Context, request ChatCompletio
 	}, nil
 }
 
-// CreateResponse creates a non-streaming OpenAI-compatible Responses result.
-func (c *Client) CreateResponse(ctx context.Context, request ResponseRequest) (*Response, error) {
-	if err := validateAutoModel(request.Model); err != nil {
-		return nil, err
-	}
-	if err := c.requireAPIKey(); err != nil {
-		return nil, err
-	}
-	request.Stream = false
-	var response Response
-	if err := c.requestJSON(ctx, http.MethodPost, c.openAIBaseURL+"/responses", request, &response); err != nil {
-		return nil, err
-	}
-	return &response, nil
-}
-
-// StreamResponse starts an OpenAI-compatible Responses SSE stream. The caller
-// must close the returned stream. The stream ends after response.completed.
-func (c *Client) StreamResponse(ctx context.Context, request ResponseRequest) (*ResponseStream, error) {
-	if err := validateAutoModel(request.Model); err != nil {
-		return nil, err
-	}
-	if err := c.requireAPIKey(); err != nil {
-		return nil, err
-	}
-	request.Stream = true
-	requestCtx, cancel := c.withTimeout(ctx)
-	req, err := c.newJSONRequest(requestCtx, http.MethodPost, c.openAIBaseURL+"/responses", request)
-	if err != nil {
-		cancel()
-		return nil, err
-	}
-	req.Header.Set("Accept", "text/event-stream")
-
-	res, err := c.httpClient.Do(req)
-	if err != nil {
-		cancel()
-		return nil, err
-	}
-	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		defer res.Body.Close()
-		cancel()
-		return nil, parseAPIError(res)
-	}
-
-	return &ResponseStream{
-		body:    res.Body,
-		scanner: newSSEScanner(res.Body),
-		cancel:  cancel,
-	}, nil
-}
-
 // GenerateImage creates an OpenAI-compatible image generation.
 func (c *Client) GenerateImage(ctx context.Context, request ImageGenerationRequest) (*ImageGenerationResponse, error) {
 	if err := validateAutoModel(request.Model); err != nil {
@@ -242,59 +368,6 @@ func (c *Client) GenerateImage(ctx context.Context, request ImageGenerationReque
 		return nil, err
 	}
 	return &response, nil
-}
-
-// CreateMessage creates a non-streaming Anthropic-compatible message.
-func (c *Client) CreateMessage(ctx context.Context, request MessageRequest) (*MessageResponse, error) {
-	if err := validateAutoModel(request.Model); err != nil {
-		return nil, err
-	}
-	if err := c.requireAPIKey(); err != nil {
-		return nil, err
-	}
-	request.Stream = false
-	var response MessageResponse
-	if err := c.requestAnthropicJSON(ctx, http.MethodPost, c.anthropicBaseURL+"/messages", request, &response); err != nil {
-		return nil, err
-	}
-	return &response, nil
-}
-
-// StreamMessage starts a streaming Anthropic-compatible message.
-// The caller must close the returned stream.
-func (c *Client) StreamMessage(ctx context.Context, request MessageRequest) (*MessageStream, error) {
-	if err := validateAutoModel(request.Model); err != nil {
-		return nil, err
-	}
-	if err := c.requireAPIKey(); err != nil {
-		return nil, err
-	}
-	request.Stream = true
-	requestCtx, cancel := c.withTimeout(ctx)
-	req, err := c.newJSONRequest(requestCtx, http.MethodPost, c.anthropicBaseURL+"/messages", request)
-	if err != nil {
-		cancel()
-		return nil, err
-	}
-	c.setAnthropicHeaders(req)
-	req.Header.Set("Accept", "text/event-stream")
-
-	res, err := c.httpClient.Do(req)
-	if err != nil {
-		cancel()
-		return nil, err
-	}
-	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		defer res.Body.Close()
-		cancel()
-		return nil, parseAPIError(res)
-	}
-
-	return &MessageStream{
-		body:    res.Body,
-		scanner: newSSEScanner(res.Body),
-		cancel:  cancel,
-	}, nil
 }
 
 // ListModels lists the public JoyToken model catalog.
@@ -378,12 +451,7 @@ func (c *Client) GetPricing(ctx context.Context) (*PricingResponse, error) {
 func (c *Client) requestJSON(ctx context.Context, method string, url string, body any, output any) error {
 	requestCtx, cancel := c.withTimeout(ctx)
 	defer cancel()
-	req, err := c.newJSONRequest(requestCtx, method, url, body)
-	if err != nil {
-		return err
-	}
-
-	res, err := c.httpClient.Do(req)
+	res, err := c.sendWithRetry(requestCtx, method, url, body, nil)
 	if err != nil {
 		return err
 	}
@@ -396,26 +464,111 @@ func (c *Client) requestJSON(ctx context.Context, method string, url string, bod
 	return json.NewDecoder(res.Body).Decode(output)
 }
 
-func (c *Client) requestAnthropicJSON(ctx context.Context, method string, url string, body any, output any) error {
-	requestCtx, cancel := c.withTimeout(ctx)
-	defer cancel()
-	req, err := c.newJSONRequest(requestCtx, method, url, body)
-	if err != nil {
-		return err
-	}
-	c.setAnthropicHeaders(req)
+// sendWithRetry issues the request and transparently retries transient
+// failures (HTTP 429/5xx and transport errors) up to c.maxRetries times with
+// bounded exponential backoff and jitter, honoring a Retry-After header when
+// present. The request body is rebuilt on every attempt (newJSONRequest
+// re-marshals it), but rebuilding the body does not make a model invocation
+// idempotent; callers must explicitly opt in through WithMaxRetries. The prepare
+// hook, if set, mutates the request after the standard headers are applied.
+// A non-retryable response (2xx or a 4xx other than 429) is returned as-is for
+// the caller to decode or turn into an APIError.
+func (c *Client) sendWithRetry(ctx context.Context, method, url string, body any, prepare func(*http.Request)) (*http.Response, error) {
+	for attempt := 0; ; attempt++ {
+		req, err := c.newJSONRequest(ctx, method, url, body)
+		if err != nil {
+			return nil, err
+		}
+		if prepare != nil {
+			prepare(req)
+		}
 
-	res, err := c.httpClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer res.Body.Close()
+		res, err := c.httpClient.Do(req)
+		if err != nil {
+			// Never retry a canceled/expired context; surface it immediately.
+			if ctx.Err() != nil {
+				return nil, err
+			}
+			if attempt >= c.maxRetries {
+				return nil, err
+			}
+			if !c.sleepBeforeRetry(ctx, attempt, 0) {
+				return nil, err
+			}
+			continue
+		}
 
-	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return parseAPIError(res)
-	}
+		if attempt < c.maxRetries && isRetryableStatus(res.StatusCode) {
+			retryAfter := parseRetryAfter(res.Header.Get("Retry-After"))
+			// Drain and close so the underlying connection can be reused.
+			io.Copy(io.Discard, res.Body)
+			res.Body.Close()
+			if !c.sleepBeforeRetry(ctx, attempt, retryAfter) {
+				return nil, ctx.Err()
+			}
+			continue
+		}
 
-	return json.NewDecoder(res.Body).Decode(output)
+		return res, nil
+	}
+}
+
+// isRetryableStatus reports whether an HTTP status warrants an automatic retry:
+// 429 (rate limited) and 5xx (server/gateway errors, including the transient
+// 503 upstream blip). 4xx other than 429 are deterministic client errors and
+// are never retried.
+func isRetryableStatus(status int) bool {
+	return status == http.StatusTooManyRequests || (status >= 500 && status <= 599)
+}
+
+// sleepBeforeRetry waits for the backoff interval for the given attempt (0-based)
+// before the next try. It prefers an explicit Retry-After duration when the
+// server provided one, otherwise uses exponential backoff (retryBaseDelay * 2^attempt)
+// capped at retryMaxDelay with full jitter. It returns false if ctx is done
+// while waiting so the caller can abort.
+func (c *Client) sleepBeforeRetry(ctx context.Context, attempt int, retryAfter time.Duration) bool {
+	delay := retryAfter
+	if delay <= 0 {
+		backoff := retryBaseDelay << attempt
+		if backoff > retryMaxDelay || backoff <= 0 {
+			backoff = retryMaxDelay
+		}
+		// Full jitter: sleep a random duration in [0, backoff].
+		delay = time.Duration(rand.Int63n(int64(backoff) + 1))
+	}
+	if delay > retryMaxDelay {
+		delay = retryMaxDelay
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
+// parseRetryAfter interprets a Retry-After header value, which may be either a
+// number of seconds or an HTTP date. It returns 0 when the value is absent or
+// unparseable, in which case the caller falls back to exponential backoff.
+func parseRetryAfter(value string) time.Duration {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0
+	}
+	if secs, err := strconv.Atoi(value); err == nil {
+		if secs < 0 {
+			return 0
+		}
+		return time.Duration(secs) * time.Second
+	}
+	if t, err := http.ParseTime(value); err == nil {
+		if d := time.Until(t); d > 0 {
+			return d
+		}
+	}
+	return 0
 }
 
 func (c *Client) newJSONRequest(ctx context.Context, method string, url string, body any) (*http.Request, error) {
@@ -455,14 +608,6 @@ func (c *Client) newJSONRequest(ctx context.Context, method string, url string, 
 	return req, nil
 }
 
-func (c *Client) setAnthropicHeaders(req *http.Request) {
-	req.Header.Del("Authorization")
-	if c.apiKey != "" {
-		req.Header.Set("x-api-key", c.apiKey)
-	}
-	req.Header.Set("anthropic-version", c.anthropicVersion)
-}
-
 // ChatCompletionStream reads Chat Completions SSE events.
 type ChatCompletionStream struct {
 	body    io.ReadCloser
@@ -482,56 +627,6 @@ func (s *ChatCompletionStream) Recv() (*ChatCompletionChunk, error) {
 
 // Close closes the underlying streaming response body.
 func (s *ChatCompletionStream) Close() error {
-	if s.cancel != nil {
-		s.cancel()
-	}
-	return s.body.Close()
-}
-
-// ResponseStream reads OpenAI-compatible Responses SSE events.
-type ResponseStream struct {
-	body    io.ReadCloser
-	scanner *bufio.Scanner
-	cancel  context.CancelFunc
-}
-
-// Recv returns the next Responses event or io.EOF when the stream ends.
-func (s *ResponseStream) Recv() (*ResponseStreamEvent, error) {
-	var event ResponseStreamEvent
-	if err := recvSSEJSON(s.scanner, &event); err != nil {
-		_ = s.Close()
-		return nil, err
-	}
-	return &event, nil
-}
-
-// Close closes the underlying streaming response body.
-func (s *ResponseStream) Close() error {
-	if s.cancel != nil {
-		s.cancel()
-	}
-	return s.body.Close()
-}
-
-// MessageStream reads Anthropic Messages SSE events.
-type MessageStream struct {
-	body    io.ReadCloser
-	scanner *bufio.Scanner
-	cancel  context.CancelFunc
-}
-
-// Recv returns the next message event or io.EOF when the stream ends.
-func (s *MessageStream) Recv() (*MessageStreamEvent, error) {
-	var event MessageStreamEvent
-	if err := recvSSEJSON(s.scanner, &event); err != nil {
-		_ = s.Close()
-		return nil, err
-	}
-	return &event, nil
-}
-
-// Close closes the underlying streaming response body.
-func (s *MessageStream) Close() error {
 	if s.cancel != nil {
 		s.cancel()
 	}
@@ -559,9 +654,47 @@ func validateAutoModel(model string) error {
 	return nil
 }
 
+// ErrorCode is a provider-neutral classification of a failed request. It is
+// aligned with the JoyToken TypeScript SDK so callers get identical error
+// semantics across languages.
+type ErrorCode string
+
+const (
+	ErrorCodeRateLimited    ErrorCode = "rate_limited"
+	ErrorCodeServerError    ErrorCode = "server_error"
+	ErrorCodeTimeout        ErrorCode = "timeout"
+	ErrorCodeNetwork        ErrorCode = "network"
+	ErrorCodeInvalidRequest ErrorCode = "invalid_request"
+	ErrorCodeAuthentication ErrorCode = "authentication"
+	ErrorCodePermission     ErrorCode = "permission"
+	ErrorCodeNotFound       ErrorCode = "not_found"
+	ErrorCodeUnknown        ErrorCode = "unknown"
+)
+
+// classifyStatus maps an HTTP status code to a provider-neutral ErrorCode.
+func classifyStatus(status int) ErrorCode {
+	switch {
+	case status == http.StatusTooManyRequests:
+		return ErrorCodeRateLimited
+	case status == http.StatusUnauthorized:
+		return ErrorCodeAuthentication
+	case status == http.StatusForbidden:
+		return ErrorCodePermission
+	case status == http.StatusNotFound:
+		return ErrorCodeNotFound
+	case status == http.StatusBadRequest || status == http.StatusUnprocessableEntity:
+		return ErrorCodeInvalidRequest
+	case status >= 500 && status <= 599:
+		return ErrorCodeServerError
+	default:
+		return ErrorCodeUnknown
+	}
+}
+
 // APIError describes a non-successful JoyToken HTTP response.
 type APIError struct {
 	StatusCode      int
+	Code            ErrorCode
 	RequestID       string
 	ResponseHeaders http.Header
 	Body            any
@@ -598,6 +731,7 @@ func parseAPIError(res *http.Response) error {
 	}
 	return &APIError{
 		StatusCode:      res.StatusCode,
+		Code:            classifyStatus(res.StatusCode),
 		RequestID:       firstHeader(res.Header, "X-DAOE-Request-ID", "X-Request-ID"),
 		ResponseHeaders: res.Header.Clone(),
 		Body:            body,
