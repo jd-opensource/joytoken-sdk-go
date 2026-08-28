@@ -108,6 +108,9 @@ func (c *Client) RunChatCompletionStream(ctx context.Context, request ChatComple
 	}
 
 	result.Messages = messages
+	if result.StoppedBy == "max_steps" {
+		result.FinishReason = "max_steps"
+	}
 	return result, nil
 }
 
@@ -184,7 +187,9 @@ func newToolCallAccumulator() *toolCallAccumulator {
 
 // add merges the tool_calls fragment carried by one delta map into the
 // accumulator. The wire shape is delta["tool_calls"] = [ {index, id, type,
-// function:{name, arguments}} ... ] with any field possibly absent per chunk.
+// function:{name, arguments}, extra_content:{...}} ... ] with any field
+// possibly absent per chunk. extra_content is an opaque vendor extension; for
+// example, Gemini puts its required thought signature there.
 func (a *toolCallAccumulator) add(delta map[string]any) {
 	raw, ok := delta["tool_calls"].([]any)
 	if !ok {
@@ -219,7 +224,31 @@ func (a *toolCallAccumulator) add(delta map[string]any) {
 				call.Function.Arguments += args
 			}
 		}
+		if extra, ok := m["extra_content"].(map[string]any); ok {
+			call.ExtraContent = mergeJSONObject(call.ExtraContent, extra)
+		}
 	}
+}
+
+// mergeJSONObject recursively combines streamed JSON object fragments without
+// interpreting vendor-specific keys or values.
+func mergeJSONObject(dst, src map[string]any) map[string]any {
+	if dst == nil {
+		dst = make(map[string]any, len(src))
+	}
+	for key, value := range src {
+		srcObject, srcIsObject := value.(map[string]any)
+		dstObject, dstIsObject := dst[key].(map[string]any)
+		if srcIsObject {
+			if !dstIsObject {
+				dstObject = nil
+			}
+			dst[key] = mergeJSONObject(dstObject, srcObject)
+			continue
+		}
+		dst[key] = value
+	}
+	return dst
 }
 
 // toolCalls returns the accumulated tool calls in first-seen index order.

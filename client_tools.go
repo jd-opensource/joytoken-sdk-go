@@ -205,6 +205,9 @@ func (c *Client) runChatCompletion(ctx context.Context, request ChatCompletionRe
 	}
 
 	result.Messages = messages
+	if result.StoppedBy == "max_steps" {
+		result.FinishReason = "max_steps"
+	}
 	return result, nil
 }
 

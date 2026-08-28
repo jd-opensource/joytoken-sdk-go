@@ -115,6 +115,8 @@ type ResponseInputItem struct {
 	Output           string `json:"output,omitempty"`
 	Summary          []any  `json:"summary,omitempty"`
 	EncryptedContent string `json:"encrypted_content,omitempty"`
+	// ExtraContent preserves opaque provider metadata across Responses turns.
+	ExtraContent map[string]any `json:"extra_content,omitempty"`
 }
 
 // ResponseInputContentPart is one text part in a Responses input message.
@@ -191,8 +193,10 @@ type ResponseOutputItem struct {
 	Arguments        string                  `json:"arguments,omitempty"`
 	Summary          []any                   `json:"summary,omitempty"`
 	EncryptedContent string                  `json:"encrypted_content,omitempty"`
-	Action           map[string]any          `json:"action,omitempty"`
-	Results          []any                   `json:"results,omitempty"`
+	// ExtraContent preserves opaque provider metadata across Responses turns.
+	ExtraContent map[string]any `json:"extra_content,omitempty"`
+	Action       map[string]any `json:"action,omitempty"`
+	Results      []any          `json:"results,omitempty"`
 }
 
 type ResponseUsage struct {
@@ -429,6 +433,8 @@ type MessageContentBlock struct {
 	Input     map[string]any `json:"input,omitempty"`
 	ToolUseID string         `json:"tool_use_id,omitempty"`
 	Content   any            `json:"content,omitempty"`
+	// ExtraContent preserves opaque provider metadata while adapting tool_use.
+	ExtraContent map[string]any `json:"extra_content,omitempty"`
 }
 
 type MessageParam struct {

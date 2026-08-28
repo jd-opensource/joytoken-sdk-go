@@ -34,6 +34,9 @@ type ToolCall struct {
 	ID       string       `json:"id"`
 	Type     string       `json:"type"`
 	Function ToolFunction `json:"function"`
+	// ExtraContent carries opaque provider metadata that must survive a tool
+	// round trip, such as Gemini's google.thought_signature extension.
+	ExtraContent map[string]any `json:"extra_content,omitempty"`
 }
 
 // ToolFunction identifies a function and its JSON arguments.
