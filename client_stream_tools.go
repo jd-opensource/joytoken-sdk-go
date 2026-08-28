@@ -55,6 +55,8 @@ func (c *Client) RunChatCompletionStream(ctx context.Context, request ChatComple
 		assistant, usage, rawFinish, err := c.streamOneChatTurn(ctx, stepRequest, opts.OnTextDelta)
 		if err != nil {
 			result.Messages = messages
+			result.StoppedBy = runStoppedByError
+			result.FinishReason = runStoppedByError
 			return result, err
 		}
 		messages = append(messages, assistant)
@@ -63,6 +65,8 @@ func (c *Client) RunChatCompletionStream(ctx context.Context, request ChatComple
 		toolResults, err := c.executeToolCallsWithHandlers(ctx, handlers, step, assistant.ToolCalls, messages)
 		if err != nil {
 			result.Messages = messages
+			result.StoppedBy = runStoppedByError
+			result.FinishReason = runStoppedByError
 			return result, err
 		}
 		if opts.OnToolResult != nil {

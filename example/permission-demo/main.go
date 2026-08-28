@@ -115,7 +115,10 @@ func main() {
 		MaxTokens: intPtr(300),
 	}, joytoken.RunChatOptions{MaxSteps: 6})
 	if err != nil {
-		fmt.Printf("Demo A failed (likely intermittent upstream): %v\n", err)
+		fmt.Printf("Demo A request stopped: %v\n", err)
+		if resultA != nil {
+			fmt.Printf("partial: steps=%d  stopped_by=%s  finish=%s\n", len(resultA.Steps), resultA.StoppedBy, resultA.FinishReason)
+		}
 	} else {
 		fmt.Printf("steps=%d  stopped_by=%s  finish=%s\n", len(resultA.Steps), resultA.StoppedBy, resultA.FinishReason)
 		fmt.Printf("final: %s\n", truncate(resultA.FinalText, 200))
@@ -137,7 +140,7 @@ func main() {
 		MaxTokens: intPtr(300),
 	})
 	if err != nil {
-		fmt.Printf("Demo B failed (likely intermittent upstream): %v\n", err)
+		fmt.Printf("Demo B request stopped: %v\n", err)
 	} else if len(respB.Choices) > 0 {
 		msg := respB.Choices[0].Message
 		fmt.Printf("finish=%s  tool_calls=%d\n", respB.Choices[0].FinishReason, len(msg.ToolCalls))

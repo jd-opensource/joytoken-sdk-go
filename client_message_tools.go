@@ -36,6 +36,8 @@ type RunMessageResult struct {
 	FinalText string
 	Messages  []MessageParam
 	Steps     []MessageToolStep
+	// StoppedBy is "stop", "max_steps", or "error". On error, Steps and
+	// Messages retain all work completed before the failure.
 	StoppedBy string
 }
 
@@ -316,8 +318,8 @@ func (c *Client) createMessageOnce(ctx context.Context, request MessageRequest) 
 }
 
 // RunMessage executes Anthropic-compatible tool_use blocks until the model
-// returns a final message or MaxSteps is reached. A later-turn failure returns
-// a non-nil partial result containing completed steps and the transcript.
+// returns a final message or MaxSteps is reached. A request or local execution
+// failure returns a non-nil partial result marked StoppedBy "error".
 func (c *Client) RunMessage(ctx context.Context, request MessageRequest, opts RunMessageOptions) (*RunMessageResult, error) {
 	maxSteps := opts.MaxSteps
 	if maxSteps <= 0 {
@@ -334,6 +336,7 @@ func (c *Client) RunMessage(ctx context.Context, request MessageRequest, opts Ru
 		response, err := c.createMessageOnce(ctx, stepRequest)
 		if err != nil {
 			result.Messages = messages
+			result.StoppedBy = runStoppedByError
 			return result, err
 		}
 		blocks := toolUseBlocks(response)
@@ -353,6 +356,7 @@ func (c *Client) RunMessage(ctx context.Context, request MessageRequest, opts Ru
 			})
 			if err != nil {
 				result.Messages = messages
+				result.StoppedBy = runStoppedByError
 				return result, err
 			}
 			toolResults = append(toolResults, toolResult)
@@ -394,6 +398,7 @@ func (c *Client) RunMessageStream(ctx context.Context, request MessageRequest, o
 		response, err := c.streamOneMessageTurn(ctx, stepRequest, opts.OnTextDelta)
 		if err != nil {
 			result.Messages = messages
+			result.StoppedBy = runStoppedByError
 			return result, err
 		}
 		blocks := toolUseBlocks(response)
@@ -413,6 +418,7 @@ func (c *Client) RunMessageStream(ctx context.Context, request MessageRequest, o
 			})
 			if err != nil {
 				result.Messages = messages
+				result.StoppedBy = runStoppedByError
 				return result, err
 			}
 			toolResults = append(toolResults, toolResult)
