@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	joytoken "github.com/jd-opensource/joytoken-sdk-go"
+	"github.com/jd-opensource/joytoken-sdk-go/tool"
 )
 
 // Agent runs a bounded model-and-tool loop.
@@ -143,27 +144,52 @@ func (a *Agent) executeToolCalls(ctx context.Context, step int, calls []joytoken
 				ToolCallID: call.ID,
 				ToolName:   call.Function.Name,
 				Content:    "Tool not found: " + call.Function.Name,
+				IsError:    true,
 			})
 			continue
 		}
 		if tool.Execute == nil {
+			// A registered tool with no Execute is a host configuration bug,
+			// not something the model can fix by retrying, so fail hard.
 			return nil, fmt.Errorf("tool %q has no Execute function", tool.Name)
 		}
-		output, err := tool.Execute(ctx, parseToolArguments(call.Function.Arguments), ToolExecutionContext{
+		output, err := safeExecute(ctx, tool.Execute, parseToolArguments(call.Function.Arguments), ToolExecutionContext{
 			Step:     step,
 			ToolCall: call,
 			Messages: messages,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("execute tool %q: %w", tool.Name, err)
+			// Tool failures (bad arguments, runtime errors, recovered panics)
+			// are fed back to the model as an observation so it can correct
+			// itself on a later step, instead of aborting the whole run.
+			results = append(results, ToolResult{
+				ToolCallID: call.ID,
+				ToolName:   tool.Name,
+				Content:    "Tool error: " + err.Error(),
+				IsError:    true,
+			})
+			continue
 		}
 		content, err := stringifyToolResult(output)
 		if err != nil {
-			return nil, fmt.Errorf("serialize tool %q result: %w", tool.Name, err)
+			results = append(results, ToolResult{
+				ToolCallID: call.ID,
+				ToolName:   tool.Name,
+				Content:    "Tool error: failed to serialize result: " + err.Error(),
+				IsError:    true,
+			})
+			continue
 		}
 		results = append(results, ToolResult{ToolCallID: call.ID, ToolName: tool.Name, Content: content})
 	}
 	return results, nil
+}
+
+// safeExecute runs a tool's Execute function and converts any panic into an
+// error so a single misbehaving tool cannot crash the whole agent process. It
+// delegates to tool.SafeExecute so the client and agent share one recovery path.
+func safeExecute(ctx context.Context, execute ToolExecuteFunc, input any, execution ToolExecutionContext) (output any, err error) {
+	return tool.SafeExecute(ctx, execute, input, execution)
 }
 
 func valueOrDefault(value, fallback string) string {
@@ -200,8 +226,7 @@ func textContent(content any) string {
 	if value, ok := content.(string); ok {
 		return value
 	}
-	blocks, ok := content.([]joytoken.MessageContentBlock)
-	if ok {
+	if blocks, ok := content.([]joytoken.MessageContentBlock); ok {
 		var builder strings.Builder
 		for _, block := range blocks {
 			if block.Type == "text" || block.Text != "" {

@@ -1,42 +1,31 @@
 package joytoken
 
+import "github.com/jd-opensource/joytoken-sdk-go/tooldef"
+
 // ModelAuto is the only model value accepted by JoyToken requests.
 const ModelAuto = "auto"
 
+// The tool-related wire types live in the tooldef package (the bottom of the
+// dependency graph) so concrete tool implementations can be defined there and
+// reused by this client's execution loop without an import cycle. They are
+// re-exported here as type aliases (=) so every downstream reference to
+// joytoken.ChatMessage etc. keeps working unchanged and JSON serialization is
+// byte-for-byte identical.
+
 // ChatMessage is an OpenAI-compatible conversation message.
-type ChatMessage struct {
-	Role       string     `json:"role"`
-	Content    any        `json:"content,omitempty"`
-	Name       string     `json:"name,omitempty"`
-	ToolCallID string     `json:"tool_call_id,omitempty"`
-	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
-}
+type ChatMessage = tooldef.ChatMessage
 
 // ToolCall describes a model-requested function call.
-type ToolCall struct {
-	ID       string       `json:"id"`
-	Type     string       `json:"type"`
-	Function ToolFunction `json:"function"`
-}
+type ToolCall = tooldef.ToolCall
 
 // ToolFunction identifies a function and its JSON arguments.
-type ToolFunction struct {
-	Name      string `json:"name"`
-	Arguments string `json:"arguments"`
-}
+type ToolFunction = tooldef.ToolFunction
 
 // ChatTool declares a tool available to Chat Completions.
-type ChatTool struct {
-	Type     string           `json:"type"`
-	Function ChatToolFunction `json:"function"`
-}
+type ChatTool = tooldef.ChatTool
 
 // ChatToolFunction contains the schema for a callable function.
-type ChatToolFunction struct {
-	Name        string         `json:"name"`
-	Description string         `json:"description,omitempty"`
-	Parameters  map[string]any `json:"parameters,omitempty"`
-}
+type ChatToolFunction = tooldef.ChatToolFunction
 
 // ChatCompletionRequest is an OpenAI-compatible completion request. Model must
 // be ModelAuto.
@@ -48,7 +37,7 @@ type ChatCompletionRequest struct {
 	MaxTokens   *int           `json:"max_tokens,omitempty"`
 	TopP        *float64       `json:"top_p,omitempty"`
 	Stop        any            `json:"stop,omitempty"`
-	Tools       []ChatTool     `json:"tools,omitempty"`
+	Tools       []ChatTool     `json:"tools"`
 	ToolChoice  any            `json:"tool_choice,omitempty"`
 	Tier        string         `json:"tier,omitempty"`
 	Metadata    map[string]any `json:"metadata,omitempty"`
@@ -56,12 +45,13 @@ type ChatCompletionRequest struct {
 
 // ChatCompletionResponse is a non-streaming completion response.
 type ChatCompletionResponse struct {
-	ID      string                 `json:"id,omitempty"`
-	Object  string                 `json:"object,omitempty"`
-	Created int64                  `json:"created,omitempty"`
-	Model   string                 `json:"model,omitempty"`
-	Choices []ChatCompletionChoice `json:"choices"`
-	Usage   *Usage                 `json:"usage,omitempty"`
+	ID       string                 `json:"id,omitempty"`
+	Object   string                 `json:"object,omitempty"`
+	Created  int64                  `json:"created,omitempty"`
+	Model    string                 `json:"model,omitempty"`
+	Choices  []ChatCompletionChoice `json:"choices"`
+	Usage    *Usage                 `json:"usage,omitempty"`
+	Metadata map[string]any         `json:"metadata,omitempty"`
 }
 
 // ChatCompletionChoice is one generated completion choice.
@@ -74,12 +64,13 @@ type ChatCompletionChoice struct {
 
 // ChatCompletionChunk is one streaming completion event.
 type ChatCompletionChunk struct {
-	ID      string                      `json:"id,omitempty"`
-	Object  string                      `json:"object,omitempty"`
-	Created int64                       `json:"created,omitempty"`
-	Model   string                      `json:"model,omitempty"`
-	Choices []ChatCompletionChunkChoice `json:"choices"`
-	Usage   *Usage                      `json:"usage,omitempty"`
+	ID       string                      `json:"id,omitempty"`
+	Object   string                      `json:"object,omitempty"`
+	Created  int64                       `json:"created,omitempty"`
+	Model    string                      `json:"model,omitempty"`
+	Choices  []ChatCompletionChunkChoice `json:"choices"`
+	Usage    *Usage                      `json:"usage,omitempty"`
+	Metadata map[string]any              `json:"metadata,omitempty"`
 }
 
 // ChatCompletionChunkChoice is one incremental streaming choice.
@@ -90,79 +81,120 @@ type ChatCompletionChunkChoice struct {
 	Logprobs     any            `json:"logprobs,omitempty"`
 }
 
-// ResponseInputItem is one message in a Responses API input array. Content may
-// be a string or a slice of ResponseInputContentPart values.
+// ResponseInputItem is one OpenAI Responses-compatible input item. It covers
+// message input plus the function_call/function_call_output items used by the
+// SDK's native Responses tool loop.
 type ResponseInputItem struct {
-	Type    string `json:"type,omitempty"`
-	Role    string `json:"role,omitempty"`
-	Content any    `json:"content,omitempty"`
+	Type             string `json:"type,omitempty"`
+	ID               string `json:"id,omitempty"`
+	Role             string `json:"role,omitempty"`
+	Status           string `json:"status,omitempty"`
+	Content          any    `json:"content,omitempty"`
+	CallID           string `json:"call_id,omitempty"`
+	Name             string `json:"name,omitempty"`
+	Arguments        string `json:"arguments,omitempty"`
+	Output           string `json:"output,omitempty"`
+	Summary          []any  `json:"summary,omitempty"`
+	EncryptedContent string `json:"encrypted_content,omitempty"`
 }
 
-// ResponseInputContentPart is one text part in a Responses API input message.
+// ResponseInputContentPart is one text part in a Responses input message.
 type ResponseInputContentPart struct {
 	Type string `json:"type"`
 	Text string `json:"text"`
 }
 
-// ResponseTool declares a function available to the Responses API. JoyToken
-// currently supports function tools; built-in OpenAI tools are not forwarded.
+// ResponseTool declares either a function tool or a vendor-hosted Responses
+// tool. Declarations are sent directly to the gateway's Responses endpoint.
 type ResponseTool struct {
-	Type        string         `json:"type"`
-	Name        string         `json:"name"`
+	Type string `json:"type"`
+
+	Name        string         `json:"name,omitempty"`
 	Description string         `json:"description,omitempty"`
 	Parameters  map[string]any `json:"parameters,omitempty"`
+	Strict      *bool          `json:"strict,omitempty"`
+
+	SearchContextSize string                      `json:"search_context_size,omitempty"`
+	UserLocation      *ResponseToolUserLocation   `json:"user_location,omitempty"`
+	VectorStoreIDs    []string                    `json:"vector_store_ids,omitempty"`
+	MaxNumResults     *int                        `json:"max_num_results,omitempty"`
+	Filters           map[string]any              `json:"filters,omitempty"`
+	RankingOptions    *ResponseToolRankingOptions `json:"ranking_options,omitempty"`
 }
 
-// ResponseRequest is a request to the OpenAI-compatible Responses API. Model
-// must be ModelAuto. Input may be a string or a slice of ResponseInputItem
-// values.
+type ResponseToolUserLocation struct {
+	Type     string `json:"type,omitempty"`
+	Country  string `json:"country,omitempty"`
+	City     string `json:"city,omitempty"`
+	Region   string `json:"region,omitempty"`
+	Timezone string `json:"timezone,omitempty"`
+}
+
+type ResponseToolRankingOptions struct {
+	Ranker         string   `json:"ranker,omitempty"`
+	ScoreThreshold *float64 `json:"score_threshold,omitempty"`
+}
+
+// ResponseRequest is an OpenAI Responses-compatible request sent directly to
+// /openai/v1/responses. Model must be ModelAuto.
 type ResponseRequest struct {
-	Model           string         `json:"model"`
-	Input           any            `json:"input"`
-	Instructions    string         `json:"instructions,omitempty"`
-	Stream          bool           `json:"stream,omitempty"`
-	MaxOutputTokens *int           `json:"max_output_tokens,omitempty"`
-	Temperature     *float64       `json:"temperature,omitempty"`
-	TopP            *float64       `json:"top_p,omitempty"`
-	Tools           []ResponseTool `json:"tools,omitempty"`
+	Model              string         `json:"model"`
+	Input              any            `json:"input"`
+	Instructions       string         `json:"instructions,omitempty"`
+	Stream             bool           `json:"stream,omitempty"`
+	MaxOutputTokens    *int           `json:"max_output_tokens,omitempty"`
+	Temperature        *float64       `json:"temperature,omitempty"`
+	TopP               *float64       `json:"top_p,omitempty"`
+	Tools              []ResponseTool `json:"tools"`
+	ToolChoice         any            `json:"tool_choice,omitempty"`
+	ParallelToolCalls  *bool          `json:"parallel_tool_calls,omitempty"`
+	PreviousResponseID string         `json:"previous_response_id,omitempty"`
+	Include            []string       `json:"include,omitempty"`
+	Store              *bool          `json:"store,omitempty"`
+	Tier               string         `json:"tier,omitempty"`
+	Metadata           map[string]any `json:"metadata,omitempty"`
 }
 
-// ResponseOutputContent is one content part in a Responses API output message.
 type ResponseOutputContent struct {
 	Type        string `json:"type"`
 	Text        string `json:"text,omitempty"`
 	Annotations []any  `json:"annotations,omitempty"`
 }
 
-// ResponseOutputItem is one item returned in a Responses API output array.
 type ResponseOutputItem struct {
-	ID      string                  `json:"id,omitempty"`
-	Type    string                  `json:"type"`
-	Role    string                  `json:"role,omitempty"`
-	Status  string                  `json:"status,omitempty"`
-	Content []ResponseOutputContent `json:"content,omitempty"`
+	ID               string                  `json:"id,omitempty"`
+	Type             string                  `json:"type"`
+	Role             string                  `json:"role,omitempty"`
+	Status           string                  `json:"status,omitempty"`
+	Content          []ResponseOutputContent `json:"content,omitempty"`
+	CallID           string                  `json:"call_id,omitempty"`
+	Name             string                  `json:"name,omitempty"`
+	Arguments        string                  `json:"arguments,omitempty"`
+	Summary          []any                   `json:"summary,omitempty"`
+	EncryptedContent string                  `json:"encrypted_content,omitempty"`
+	Action           map[string]any          `json:"action,omitempty"`
+	Results          []any                   `json:"results,omitempty"`
 }
 
-// ResponseUsage reports token usage using Responses API field names.
 type ResponseUsage struct {
 	InputTokens  int `json:"input_tokens,omitempty"`
 	OutputTokens int `json:"output_tokens,omitempty"`
 	TotalTokens  int `json:"total_tokens,omitempty"`
 }
 
-// Response is a non-streaming Responses API result or the response envelope
-// included in response.created and response.completed stream events.
 type Response struct {
-	ID       string               `json:"id"`
-	Object   string               `json:"object"`
-	Status   string               `json:"status"`
-	Model    string               `json:"model"`
-	Output   []ResponseOutputItem `json:"output,omitempty"`
-	Usage    *ResponseUsage       `json:"usage,omitempty"`
-	Metadata map[string]any       `json:"metadata,omitempty"`
+	ID                string               `json:"id"`
+	Object            string               `json:"object"`
+	CreatedAt         int64                `json:"created_at,omitempty"`
+	Status            string               `json:"status"`
+	Model             string               `json:"model"`
+	Output            []ResponseOutputItem `json:"output,omitempty"`
+	Usage             *ResponseUsage       `json:"usage,omitempty"`
+	Metadata          map[string]any       `json:"metadata,omitempty"`
+	Error             map[string]any       `json:"error,omitempty"`
+	IncompleteDetails map[string]any       `json:"incomplete_details,omitempty"`
 }
 
-// OutputText returns all output_text parts concatenated in output order.
 func (r *Response) OutputText() string {
 	if r == nil {
 		return ""
@@ -178,9 +210,6 @@ func (r *Response) OutputText() string {
 	return text
 }
 
-// ResponseStreamEvent is one SSE event returned by the Responses API. Fields
-// are populated according to Type, for example Delta on
-// response.output_text.delta and Response on response.completed.
 type ResponseStreamEvent struct {
 	Type           string                 `json:"type"`
 	SequenceNumber int                    `json:"sequence_number"`
@@ -192,6 +221,8 @@ type ResponseStreamEvent struct {
 	Part           *ResponseOutputContent `json:"part,omitempty"`
 	Delta          string                 `json:"delta,omitempty"`
 	Text           string                 `json:"text,omitempty"`
+	Arguments      string                 `json:"arguments,omitempty"`
+	Error          map[string]any         `json:"error,omitempty"`
 }
 
 // ImageGenerationRequest is an OpenAI-compatible image generation request.
@@ -346,7 +377,7 @@ type PricingResponse struct {
 	Message string  `json:"message"`
 }
 
-// MessageContentBlock is an Anthropic-compatible content block.
+// MessageContentBlock is an Anthropic Messages-compatible content block.
 type MessageContentBlock struct {
 	Type      string         `json:"type"`
 	Text      string         `json:"text,omitempty"`
@@ -357,21 +388,26 @@ type MessageContentBlock struct {
 	Content   any            `json:"content,omitempty"`
 }
 
-// MessageParam is an Anthropic-compatible input message.
 type MessageParam struct {
 	Role    string `json:"role"`
 	Content any    `json:"content"`
 }
 
-// MessageTool declares a tool available to Anthropic Messages.
 type MessageTool struct {
 	Name        string         `json:"name"`
 	Description string         `json:"description,omitempty"`
 	InputSchema map[string]any `json:"input_schema"`
 }
 
-// MessageRequest is an Anthropic-compatible Messages request. Model must be
-// ModelAuto.
+// MessageToolChoice is the Anthropic-compatible tool_choice shape. Type may be
+// "auto", "any", "tool", or "none"; Name is used with Type "tool".
+type MessageToolChoice struct {
+	Type string `json:"type"`
+	Name string `json:"name,omitempty"`
+}
+
+// MessageRequest is an Anthropic Messages-compatible request translated to the
+// gateway's Chat Completions endpoint.
 type MessageRequest struct {
 	Model       string         `json:"model"`
 	MaxTokens   int            `json:"max_tokens"`
@@ -380,11 +416,11 @@ type MessageRequest struct {
 	Stream      bool           `json:"stream,omitempty"`
 	Temperature *float64       `json:"temperature,omitempty"`
 	Tools       []MessageTool  `json:"tools,omitempty"`
+	ToolChoice  any            `json:"tool_choice,omitempty"`
 	Tier        string         `json:"tier,omitempty"`
 	Metadata    map[string]any `json:"metadata,omitempty"`
 }
 
-// MessageUsage reports Anthropic-compatible token usage.
 type MessageUsage struct {
 	InputTokens              int `json:"input_tokens,omitempty"`
 	OutputTokens             int `json:"output_tokens,omitempty"`
@@ -392,7 +428,6 @@ type MessageUsage struct {
 	CacheReadInputTokens     int `json:"cache_read_input_tokens,omitempty"`
 }
 
-// MessageResponse is a non-streaming Anthropic-compatible response.
 type MessageResponse struct {
 	ID           string                `json:"id"`
 	Type         string                `json:"type"`
@@ -405,7 +440,6 @@ type MessageResponse struct {
 	Metadata     map[string]any        `json:"metadata,omitempty"`
 }
 
-// MessageStreamEvent is one Anthropic-compatible streaming event.
 type MessageStreamEvent struct {
 	Type         string               `json:"type"`
 	Index        *int                 `json:"index,omitempty"`

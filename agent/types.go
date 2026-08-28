@@ -5,6 +5,7 @@ import (
 	"context"
 
 	joytoken "github.com/jd-opensource/joytoken-sdk-go"
+	"github.com/jd-opensource/joytoken-sdk-go/tool"
 )
 
 // ModelProvider is the model interface used by Agent.
@@ -29,20 +30,19 @@ type ModelResponse struct {
 	Raw     any
 }
 
-// AgentTool describes a function the model can call.
-type AgentTool struct {
-	Name        string
-	Description string
-	Parameters  map[string]any
-	Execute     func(ctx context.Context, input any, execution ToolExecutionContext) (any, error)
-}
+// ToolExecuteFunc is the signature of a tool's execution function. It is an
+// alias of tool.ExecuteFunc so the abstraction lives in the shared tool package
+// (which both the client and agent depend on) while existing agent.ToolExecuteFunc
+// references keep working unchanged.
+type ToolExecuteFunc = tool.ExecuteFunc
 
-// ToolExecutionContext contains the state available to a tool invocation.
-type ToolExecutionContext struct {
-	Step     int
-	ToolCall joytoken.ToolCall
-	Messages []joytoken.ChatMessage
-}
+// AgentTool describes a function the model can call. It is an alias of tool.Tool
+// so tools defined against the shared package are directly usable here.
+type AgentTool = tool.Tool
+
+// ToolExecutionContext contains the state available to a tool invocation. It is
+// an alias of tool.ExecutionContext.
+type ToolExecutionContext = tool.ExecutionContext
 
 // AgentOptions configures an Agent.
 type AgentOptions struct {
@@ -81,11 +81,15 @@ type AgentStep struct {
 	Usage            *joytoken.Usage
 }
 
-// ToolResult records the serialized result of one tool call.
+// ToolResult records the serialized result of one tool call. IsError is true
+// when the tool failed (bad arguments, a runtime error, or a panic) and Content
+// carries the error message that was fed back to the model so it can correct
+// itself and retry on a later step.
 type ToolResult struct {
 	ToolCallID string
 	ToolName   string
 	Content    string
+	IsError    bool
 }
 
 // UsageSummary accumulates usage over an agent run.
@@ -113,13 +117,12 @@ type StopDecision struct {
 // StopCondition decides whether an agent run should stop.
 type StopCondition func(state AgentState) StopDecision
 
-// Protocol identifies the provider wire format.
+// Protocol selects the public compatibility shape used by JoyTokenProvider.
+// Both values ultimately use the gateway's single Chat Completions endpoint.
 type Protocol string
 
 const (
-	// OpenAIProtocol selects the OpenAI-compatible Chat Completions endpoint.
-	OpenAIProtocol Protocol = "openai"
-	// AnthropicProtocol selects the Anthropic-compatible Messages endpoint.
+	OpenAIProtocol    Protocol = "openai"
 	AnthropicProtocol Protocol = "anthropic"
 )
 
@@ -132,11 +135,8 @@ type JoyTokenProvider struct {
 // ProviderOption configures a JoyTokenProvider.
 type ProviderOption func(*JoyTokenProvider)
 
-// WithProtocol configures the JoyToken wire protocol used by the provider.
 func WithProtocol(protocol Protocol) ProviderOption {
-	return func(provider *JoyTokenProvider) {
-		provider.Protocol = protocol
-	}
+	return func(provider *JoyTokenProvider) { provider.Protocol = protocol }
 }
 
 // Int returns a pointer to value for optional integer settings.
