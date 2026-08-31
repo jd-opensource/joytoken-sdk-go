@@ -22,6 +22,15 @@ type RunChatStreamOptions struct {
 	// OnToolResult, when set, is called after each tool call is executed with
 	// its result, so callers can surface tool activity mid-stream.
 	OnToolResult func(result ToolCallResult)
+
+	// OnOrchestration, when set, receives each Gateway orchestration event as
+	// it streams in: the planning phase (with the full plan) and each sub-task
+	// status transition. It is never called for a non-orchestrated stream.
+	OnOrchestration func(event *ChunkOrchestration)
+
+	// OnPlan, when set, is called once with the orchestrator's plan the first
+	// time it arrives, as a convenience over filtering OnOrchestration.
+	OnPlan func(plan []PlanEntry)
 }
 
 // RunChatCompletionStream runs the same bounded model-and-tool loop as
@@ -52,7 +61,7 @@ func (c *Client) RunChatCompletionStream(ctx context.Context, request ChatComple
 		stepRequest.Messages = messages
 		stepRequest.Tools = effectiveTools
 
-		assistant, usage, rawFinish, err := c.streamOneChatTurn(ctx, stepRequest, opts.OnTextDelta)
+		assistant, usage, rawFinish, err := c.streamOneChatTurn(ctx, stepRequest, opts)
 		if err != nil {
 			result.Messages = messages
 			return result, err
@@ -115,7 +124,7 @@ func (c *Client) RunChatCompletionStream(ctx context.Context, request ChatComple
 // each text chunk, and reassembles the full assistant message (text plus any
 // accumulated tool_calls) so the loop can execute tools exactly as the
 // non-streaming path does.
-func (c *Client) streamOneChatTurn(ctx context.Context, request ChatCompletionRequest, onTextDelta func(string)) (ChatMessage, *Usage, string, error) {
+func (c *Client) streamOneChatTurn(ctx context.Context, request ChatCompletionRequest, opts RunChatStreamOptions) (ChatMessage, *Usage, string, error) {
 	stream, err := c.StreamChatCompletion(ctx, request)
 	if err != nil {
 		return ChatMessage{}, nil, "", err
@@ -125,6 +134,7 @@ func (c *Client) streamOneChatTurn(ctx context.Context, request ChatCompletionRe
 	var text string
 	var usage *Usage
 	var finishReason string
+	planAnnounced := false
 	acc := newToolCallAccumulator()
 
 	for {
@@ -138,11 +148,22 @@ func (c *Client) streamOneChatTurn(ctx context.Context, request ChatCompletionRe
 		if chunk.Usage != nil {
 			usage = chunk.Usage
 		}
+		if o := chunk.Orchestration; o != nil {
+			if opts.OnOrchestration != nil {
+				opts.OnOrchestration(o)
+			}
+			if !planAnnounced && len(o.Plan) > 0 {
+				planAnnounced = true
+				if opts.OnPlan != nil {
+					opts.OnPlan(o.Plan)
+				}
+			}
+		}
 		for _, choice := range chunk.Choices {
 			if delta := deltaText(choice.Delta); delta != "" {
 				text += delta
-				if onTextDelta != nil {
-					onTextDelta(delta)
+				if opts.OnTextDelta != nil {
+					opts.OnTextDelta(delta)
 				}
 			}
 			acc.add(choice.Delta)
