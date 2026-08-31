@@ -44,6 +44,14 @@ type ChatCompletionRequest struct {
 }
 
 // ChatCompletionResponse is a non-streaming completion response.
+//
+// When Gateway orchestration is engaged, the wire "metadata" field is a JSON
+// array (one entry per orchestrated sub-task) rather than a single object, and
+// a top-level "plan" array describes the planned sub-tasks. The custom
+// UnmarshalJSON keeps Metadata populated with the first/primary object so
+// existing code that reads Metadata keeps working, while MetadataList exposes
+// the full per-task array and Plan exposes the plan. For a plain
+// (non-orchestrated) response the bytes decode exactly as before.
 type ChatCompletionResponse struct {
 	ID       string                 `json:"id,omitempty"`
 	Object   string                 `json:"object,omitempty"`
@@ -52,6 +60,27 @@ type ChatCompletionResponse struct {
 	Choices  []ChatCompletionChoice `json:"choices"`
 	Usage    *Usage                 `json:"usage,omitempty"`
 	Metadata map[string]any         `json:"metadata,omitempty"`
+
+	// Error carries the Gateway error envelope when a request answered HTTP 200
+	// but the body reported a failure (for example a failed orchestration run:
+	// {"error":{...},"choices":[]}). It is nil for a successful completion. The
+	// SDK detects this envelope and surfaces it as an *APIError rather than
+	// returning an empty response.
+	Error map[string]any `json:"error,omitempty"`
+
+	// MetadataList holds the full per-sub-task metadata array when Gateway
+	// orchestration is engaged. It is nil for a plain completion. It is not
+	// serialized directly; Metadata remains the canonical marshaled field.
+	MetadataList []OrchestrationTaskMeta `json:"-"`
+
+	// Plan lists the orchestrator's planned sub-tasks when present.
+	Plan []PlanEntry `json:"plan,omitempty"`
+}
+
+// IsOrchestrated reports whether this response carries Gateway orchestration
+// output (a per-sub-task metadata array).
+func (r *ChatCompletionResponse) IsOrchestrated() bool {
+	return r != nil && len(r.MetadataList) > 0
 }
 
 // RequestID returns the Gateway request ID carried in response metadata. The
@@ -74,6 +103,12 @@ type ChatCompletionChoice struct {
 // ChatCompletionChunk is one streaming completion event. Gateway metadata and
 // usage events may have an empty Choices slice; callers must check len(Choices)
 // or range over it instead of indexing Choices[0] unconditionally.
+//
+// When Gateway orchestration is engaged, a chunk may carry a top-level
+// "orchestration" object describing either the planning phase (with the full
+// plan) or the currently executing sub-task (task id/seq/status/title). The
+// "metadata" field may also arrive as a per-sub-task array; MetadataList
+// exposes it while Metadata keeps the first/primary object for existing code.
 type ChatCompletionChunk struct {
 	ID       string                      `json:"id,omitempty"`
 	Object   string                      `json:"object,omitempty"`
@@ -82,6 +117,21 @@ type ChatCompletionChunk struct {
 	Choices  []ChatCompletionChunkChoice `json:"choices"`
 	Usage    *Usage                      `json:"usage,omitempty"`
 	Metadata map[string]any              `json:"metadata,omitempty"`
+
+	// Error carries the Gateway error envelope when a streaming event reports a
+	// failure ({"error":{...}}). It is nil for a normal delta/metadata event.
+	// The SDK detects this envelope on Recv and surfaces it as an *APIError.
+	Error map[string]any `json:"error,omitempty"`
+
+	// Orchestration carries the Gateway orchestration progress for this event
+	// when present: the planning phase and plan, or the executing sub-task's
+	// id/seq/status/title. It is nil for a non-orchestrated stream.
+	Orchestration *ChunkOrchestration `json:"orchestration,omitempty"`
+
+	// MetadataList holds the full per-sub-task metadata array when the chunk's
+	// metadata arrives as an array. It is nil otherwise. Metadata remains the
+	// canonical marshaled field.
+	MetadataList []OrchestrationTaskMeta `json:"-"`
 }
 
 // RequestID returns the Gateway request ID carried by this stream event.

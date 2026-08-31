@@ -115,6 +115,23 @@ func metadataInt(value any) (int, bool) {
 	}
 }
 
+// metadataListTokenUsage sums the billing counters across a per-sub-task
+// orchestration metadata array. ok is true when at least one entry reported a
+// token count.
+func metadataListTokenUsage(list []OrchestrationTaskMeta) (input, output int, ok bool) {
+	for _, m := range list {
+		if m.Billing == nil {
+			continue
+		}
+		input += m.Billing.InputTokens
+		output += m.Billing.OutputTokens
+		if m.Billing.InputTokens != 0 || m.Billing.OutputTokens != 0 {
+			ok = true
+		}
+	}
+	return input, output, ok
+}
+
 func normalizeChatUsage(usage **Usage, metadata map[string]any) {
 	if *usage == nil {
 		input, output, ok := metadataTokenUsage(metadata)
@@ -146,6 +163,15 @@ func normalizeChatResponse(response *ChatCompletionResponse, headerRequestID str
 		return
 	}
 	response.Metadata = metadataWithRequestID(response.Metadata, headerRequestID)
+	// When orchestration split billing across the per-sub-task metadata array
+	// and no protocol-level usage was provided, sum each task's billing so the
+	// caller sees the whole run's token count rather than only the primary
+	// entry's. Fall back to the single-object path otherwise.
+	if response.Usage == nil && len(response.MetadataList) > 0 {
+		if input, output, ok := metadataListTokenUsage(response.MetadataList); ok {
+			response.Usage = &Usage{PromptTokens: input, CompletionTokens: output, TotalTokens: input + output}
+		}
+	}
 	normalizeChatUsage(&response.Usage, response.Metadata)
 }
 

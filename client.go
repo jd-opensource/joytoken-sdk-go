@@ -315,6 +315,13 @@ func (c *Client) createChatCompletionOnce(ctx context.Context, request ChatCompl
 	if err := c.requestJSON(ctx, http.MethodPost, c.openAIBaseURL+"/chat/completions", request, &response); err != nil {
 		return nil, err
 	}
+	// The Gateway can answer HTTP 200 with a body-level error envelope (for
+	// example a failed orchestration run: {"error":{...},"choices":[]}).
+	// requestJSON alone would surface that as an empty response, so detect the
+	// envelope on the decoded body and raise it as an *APIError.
+	if err := chatEnvelopeError(response.Error, nil, response.RequestID()); err != nil {
+		return nil, err
+	}
 	return &response, nil
 }
 
@@ -632,6 +639,13 @@ func (s *ChatCompletionStream) Recv() (*ChatCompletionChunk, error) {
 	if requestID := chunk.RequestID(); requestID != "" {
 		s.requestID = requestID
 	}
+	// A streaming event may carry a body-level error envelope even over HTTP
+	// 200 (for example a failed orchestration run). Surface it as an *APIError
+	// and close the stream instead of yielding a silent empty chunk.
+	if err := chatEnvelopeError(chunk.Error, nil, s.requestID); err != nil {
+		_ = s.Close()
+		return nil, err
+	}
 	return &chunk, nil
 }
 
@@ -749,6 +763,27 @@ func parseAPIError(res *http.Response) error {
 		RequestID:       requestID,
 		ResponseHeaders: res.Header.Clone(),
 		Body:            body,
+	}
+}
+
+// chatEnvelopeError inspects a decoded Chat response/chunk error envelope and,
+// when the Gateway answered HTTP 200 but reported a failure in the body
+// ({"error":{...}}), returns an *APIError so callers surface the real cause
+// instead of a generic empty/no-choices result. It mirrors the TypeScript SDK's
+// throwIfChatResponseError guard. A nil/empty envelope yields nil.
+func chatEnvelopeError(envelope map[string]any, header http.Header, requestID string) error {
+	if len(envelope) == 0 {
+		return nil
+	}
+	if requestID == "" {
+		requestID = requestIDFromHeaders(header)
+	}
+	return &APIError{
+		StatusCode:      http.StatusOK,
+		Code:            ErrorCodeServerError,
+		RequestID:       requestID,
+		ResponseHeaders: header.Clone(),
+		Body:            map[string]any{"error": envelope},
 	}
 }
 
