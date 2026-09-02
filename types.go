@@ -338,7 +338,7 @@ type ImageGenerationRequest struct {
 // Model, when set, must be ModelAuto; other fields are forwarded to the
 // selected image provider.
 type ImageEditRequest struct {
-	Model string `json:"model,omitempty"`
+	Model  string `json:"model,omitempty"`
 	Prompt string `json:"prompt"`
 	// Image is the source image(s) to edit. Use a string for a single image or
 	// a []string for multiple images. Each value is an http(s) URL or a base64
