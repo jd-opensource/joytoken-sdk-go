@@ -142,7 +142,7 @@ func messageInputToChat(request MessageRequest) []ChatMessage {
 					arguments, _ := json.Marshal(block.Input)
 					calls = append(calls, ToolCall{
 						ID: block.ID, Type: "function", Function: ToolFunction{Name: block.Name, Arguments: string(arguments)},
-						ExtraContent: block.ExtraContent,
+						ThoughtSignature: block.ThoughtSignature, ExtraContent: block.ExtraContent,
 					})
 				}
 			}
@@ -251,7 +251,8 @@ func chatResponseToMessage(chat *ChatCompletionResponse) *MessageResponse {
 		input := map[string]any{}
 		_ = json.Unmarshal([]byte(call.Function.Arguments), &input)
 		response.Content = append(response.Content, MessageContentBlock{
-			Type: "tool_use", ID: call.ID, Name: call.Function.Name, Input: input, ExtraContent: call.ExtraContent,
+			Type: "tool_use", ID: call.ID, Name: call.Function.Name, Input: input,
+			ThoughtSignature: call.ThoughtSignature, ExtraContent: call.ExtraContent,
 		})
 	}
 	stopReason := chatStopReason(choice.FinishReason, len(choice.Message.ToolCalls) > 0)
@@ -350,7 +351,7 @@ func (c *Client) RunMessage(ctx context.Context, request MessageRequest, opts Ru
 			executionRequest.Messages = messages
 			toolResult, err := runToolWithHandlers(ctx, handlers, block.ID, block.Name, string(arguments), ToolExecutionContext{
 				Step: step, ToolCall: ToolCall{
-					ID: block.ID, Type: "function", Function: ToolFunction{Name: block.Name, Arguments: string(arguments)}, ExtraContent: block.ExtraContent,
+					ID: block.ID, Type: "function", Function: ToolFunction{Name: block.Name, Arguments: string(arguments)}, ThoughtSignature: block.ThoughtSignature, ExtraContent: block.ExtraContent,
 				},
 				Messages: messageInputToChat(executionRequest),
 			})
@@ -412,7 +413,7 @@ func (c *Client) RunMessageStream(ctx context.Context, request MessageRequest, o
 			executionRequest.Messages = messages
 			toolResult, err := runToolWithHandlers(ctx, handlers, block.ID, block.Name, string(arguments), ToolExecutionContext{
 				Step: step, ToolCall: ToolCall{
-					ID: block.ID, Type: "function", Function: ToolFunction{Name: block.Name, Arguments: string(arguments)}, ExtraContent: block.ExtraContent,
+					ID: block.ID, Type: "function", Function: ToolFunction{Name: block.Name, Arguments: string(arguments)}, ThoughtSignature: block.ThoughtSignature, ExtraContent: block.ExtraContent,
 				},
 				Messages: messageInputToChat(executionRequest),
 			})
@@ -586,7 +587,7 @@ func (s *MessageStream) Recv() (*MessageStreamEvent, error) {
 				_ = json.Unmarshal([]byte(call.Function.Arguments), &input)
 				s.queue = append(s.queue,
 					&MessageStreamEvent{Type: "content_block_start", Index: messageIndex(index), ContentBlock: &MessageContentBlock{
-						Type: "tool_use", ID: call.ID, Name: call.Function.Name, Input: input, ExtraContent: call.ExtraContent,
+						Type: "tool_use", ID: call.ID, Name: call.Function.Name, Input: input, ThoughtSignature: call.ThoughtSignature, ExtraContent: call.ExtraContent,
 					}},
 					&MessageStreamEvent{Type: "content_block_stop", Index: messageIndex(index)},
 				)

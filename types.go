@@ -483,6 +483,13 @@ type MessageContentBlock struct {
 	Input     map[string]any `json:"input,omitempty"`
 	ToolUseID string         `json:"tool_use_id,omitempty"`
 	Content   any            `json:"content,omitempty"`
+	// ThoughtSignature preserves the opaque, provider-specific reasoning token
+	// (notably Gemini's top-level thought_signature returned by the gateway's
+	// Chat Completions endpoint) across the Anthropic Messages protocol
+	// adaptation. It MUST be echoed back verbatim on the continuation turn or
+	// the provider rejects the request with a 503, so we carry it on the
+	// tool_use block rather than dropping it during (de)serialization.
+	ThoughtSignature string `json:"thought_signature,omitempty"`
 	// ExtraContent preserves opaque provider metadata while adapting tool_use.
 	ExtraContent map[string]any `json:"extra_content,omitempty"`
 }

@@ -209,6 +209,60 @@ func TestRunMessagePreservesToolCallExtraContent(t *testing.T) {
 	}
 }
 
+func TestRunMessagePreservesTopLevelThoughtSignature(t *testing.T) {
+	for _, streaming := range []bool{false, true} {
+		name := "non-stream"
+		if streaming {
+			name = "stream"
+		}
+		t.Run(name, func(t *testing.T) {
+			var executed string
+			transport := &adapterHTTPClient{handle: func(index int, _ *http.Request, body []byte) (string, string) {
+				if index == 0 {
+					if streaming {
+						return "text/event-stream", "data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"echo\",\"arguments\":\"{\\\"text\\\":\\\"hello\\\"}\"},\"thought_signature\":\"" + testThoughtSignature + "\"}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n"
+					}
+					return "application/json", `{"id":"first","model":"auto","choices":[{"message":{"role":"assistant","tool_calls":[` + toolCallWithTopLevelSignatureJSON() + `]},"finish_reason":"tool_calls"}]}`
+				}
+				assertChatContinuationTopLevelSignature(t, body)
+				if streaming {
+					return "text/event-stream", "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"done\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
+				}
+				return "application/json", `{"id":"final","model":"auto","choices":[{"message":{"role":"assistant","content":"done"},"finish_reason":"stop"}]}`
+			}}
+			echo := Tool{Name: "echo", Execute: func(_ context.Context, input any, execution ToolExecutionContext) (any, error) {
+				executed = execution.ToolCall.ThoughtSignature
+				return input, nil
+			}}
+			client := NewClient(WithAPIKey("test-key"), WithHTTPClient(transport), WithTools(echo))
+			request := MessageRequest{Model: ModelAuto, MaxTokens: 128, Messages: []MessageParam{{Role: "user", Content: "echo hello"}}}
+			var result *RunMessageResult
+			var err error
+			if streaming {
+				result, err = client.RunMessageStream(context.Background(), request, RunMessageStreamOptions{})
+			} else {
+				result, err = client.RunMessage(context.Background(), request, RunMessageOptions{})
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.FinalText != "done" || len(transport.requests) !=2 {
+				t.Fatalf("result=%+v requests=%d", result, len(transport.requests))
+			}
+			if executed != testThoughtSignature {
+				t.Fatalf("execution top-level thought_signature=%q, want %q", executed, testThoughtSignature)
+			}
+			blocks := toolUseBlocks(result.Steps[0].Response)
+			if len(blocks) != 1 {
+				t.Fatalf("tool_use blocks=%d", len(blocks))
+			}
+			if got := blocks[0].ThoughtSignature; got != testThoughtSignature {
+				t.Fatalf("tool_use block top-level thought_signature=%q, want %q", got, testThoughtSignature)
+			}
+		})
+	}
+}
+
 func TestRunResponsePreservesFunctionCallExtraContent(t *testing.T) {
 	var executed map[string]any
 	transport := &adapterHTTPClient{handle: func(index int, _ *http.Request, body []byte) (string, string) {
