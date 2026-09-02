@@ -3,6 +3,7 @@ package joytoken
 import (
 	"context"
 	"fmt"
+	"strings"
 )
 
 // defaultToolMaxSteps bounds the RunChatCompletion loop so a model that keeps
@@ -331,11 +332,31 @@ func runToolWithHandlers(ctx context.Context, handlers map[string]Tool, callID, 
 
 // messageText extracts a plain-text representation of a message's content.
 func messageText(content any) string {
-	if content == nil {
+	switch v := content.(type) {
+	case nil:
+		return ""
+	case string:
+		return v
+	case []any:
+		// content may be an array of parts. Two shapes are supported:
+		//   - OpenAI multimodal: {"type":"text","text":"..."}  -> concatenated directly
+		//   - Gateway orchestration aggregate: {"content":"...","title":"..."} -> joined by blank lines
+		var parts []string
+		for _, item := range v {
+			m, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			if t, ok := m["text"].(string); ok && t != "" {
+				parts = append(parts, t)
+				continue
+			}
+			if c, ok := m["content"].(string); ok && c != "" {
+				parts = append(parts, c)
+			}
+		}
+		return strings.Join(parts, "\n\n")
+	default:
 		return ""
 	}
-	if s, ok := content.(string); ok {
-		return s
-	}
-	return ""
 }

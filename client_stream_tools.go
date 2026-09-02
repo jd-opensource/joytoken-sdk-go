@@ -252,6 +252,9 @@ func (a *toolCallAccumulator) add(delta map[string]any) {
 		if extra, ok := m["extra_content"].(map[string]any); ok {
 			call.ExtraContent = mergeJSONObject(call.ExtraContent, extra)
 		}
+		if sig, ok := m["thought_signature"].(string); ok && sig != "" {
+			call.ThoughtSignature = sig
+		}
 	}
 }
 
