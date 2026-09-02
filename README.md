@@ -57,6 +57,20 @@ if err != nil {
 fmt.Println(image.Data[0].URL)
 ```
 
+Edit an existing image (single URL/base64 data URI, or an array of them):
+
+```go
+edited, err := client.EditImage(ctx, joytoken.ImageEditRequest{
+    Model:  joytoken.ModelAuto,
+    Prompt: "Replace the background with a starry sky and keep the subject",
+    Image:  "https://picsum.photos/512/512",
+})
+if err != nil {
+    return err
+}
+fmt.Println(edited.Data[0].B64JSON)
+```
+
 Anthropic Messages:
 
 `CreateMessage` is also a local protocol adapter over the single Chat
@@ -78,6 +92,7 @@ The client supports:
 - streaming chat completions via SSE
 - `POST /openai/v1/responses` and native Responses SSE
 - `POST /openai/v1/images/generations`
+- `POST /openai/v1/images/edits`
 - Anthropic Messages-compatible request/response and streaming adapters
 - `GET /api/v1/models`
 - `GET /api/v1/models/meta`

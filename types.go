@@ -332,6 +332,24 @@ type ImageGenerationRequest struct {
 	OutputFormat      string `json:"output_format,omitempty"`
 }
 
+// ImageEditRequest is an OpenAI-compatible image edit request.
+// Prompt and Image are required by the JoyToken gateway. Image accepts a single
+// http(s) URL or base64 data URI (string), or multiple of them ([]string).
+// Model, when set, must be ModelAuto; other fields are forwarded to the
+// selected image provider.
+type ImageEditRequest struct {
+	Model string `json:"model,omitempty"`
+	Prompt string `json:"prompt"`
+	// Image is the source image(s) to edit. Use a string for a single image or
+	// a []string for multiple images. Each value is an http(s) URL or a base64
+	// data URI (data:<mime>;base64,<data>).
+	Image          any    `json:"image"`
+	N              *int   `json:"n,omitempty"`
+	Size           string `json:"size,omitempty"`
+	User           string `json:"user,omitempty"`
+	ResponseFormat string `json:"response_format,omitempty"`
+}
+
 // GeneratedImage contains one URL or base64-encoded generated image.
 type GeneratedImage struct {
 	URL           string `json:"url,omitempty"`

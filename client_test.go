@@ -81,6 +81,44 @@ func TestGenerateImage(t *testing.T) {
 	}
 }
 
+func TestEditImage(t *testing.T) {
+	server := newMockServer(t)
+	defer server.Close()
+
+	client := NewClient(WithAPIKey("test-key"), WithOpenAIBaseURL(server.URL+"/openai/v1"))
+	response, err := client.EditImage(context.Background(), ImageEditRequest{
+		Model:  ModelAuto,
+		Prompt: "Replace the background with a starry sky",
+		Image:  "https://example.com/source.png",
+	})
+	if err != nil {
+		t.Fatalf("EditImage returned error: %v", err)
+	}
+	if got := response.Data[0].B64JSON; got != "iVBORw0KGgoAAAANSUhEUgAA" {
+		t.Fatalf("expected edited image data, got %q", got)
+	}
+	usage, ok := response.Metadata["usage"].(map[string]any)
+	if !ok || usage["credits_used"] != "12.34" {
+		t.Fatalf("unexpected image edit metadata: %#v", response.Metadata)
+	}
+}
+
+func TestEditImageValidation(t *testing.T) {
+	client := NewClient(WithAPIKey("test-key"))
+	if _, err := client.EditImage(context.Background(), ImageEditRequest{Prompt: "edit", Image: ""}); err == nil {
+		t.Fatal("expected error for missing image")
+	}
+	if _, err := client.EditImage(context.Background(), ImageEditRequest{Prompt: "", Image: "https://example.com/x.png"}); err == nil {
+		t.Fatal("expected error for missing prompt")
+	}
+	if _, err := client.EditImage(context.Background(), ImageEditRequest{Model: "bad-model", Prompt: "edit", Image: "https://example.com/x.png"}); err == nil {
+		t.Fatal("expected error for non-auto model")
+	}
+	if _, err := client.EditImage(context.Background(), ImageEditRequest{Prompt: "edit", Image: []string{"  "}}); err == nil {
+		t.Fatal("expected error for empty image slice entries")
+	}
+}
+
 func TestStreamChatCompletionHandlesLargeSSEEvent(t *testing.T) {
 	content := strings.Repeat("x", 70*1024)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -420,6 +458,26 @@ func newMockServer(t *testing.T) *httptest.Server {
 					RevisedPrompt: payload.Prompt,
 				}},
 				Metadata: map[string]any{"usage": map[string]any{"credits_used": "1.25"}},
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/openai/v1/images/edits":
+			var payload ImageEditRequest
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Errorf("decode image edit request: %v", err)
+			}
+			if payload.Prompt != "Replace the background with a starry sky" {
+				t.Errorf("unexpected image edit request: %#v", payload)
+			}
+			if img, ok := payload.Image.(string); !ok || img != "https://example.com/source.png" {
+				t.Errorf("unexpected image edit image: %#v", payload.Image)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(ImageGenerationResponse{
+				Created: 1793395200,
+				Data: []GeneratedImage{{
+					B64JSON:       "iVBORw0KGgoAAAANSUhEUgAA",
+					RevisedPrompt: payload.Prompt,
+				}},
+				Metadata: map[string]any{"usage": map[string]any{"credits_used": "12.34"}},
 			})
 		default:
 			w.WriteHeader(http.StatusNotFound)
