@@ -47,6 +47,29 @@ func assertChatContinuationSignature(t *testing.T, body []byte) {
 	t.Fatalf("continuation omitted assistant tool_call: %s", body)
 }
 
+// toolCallWithTopLevelSignatureJSON returns a tool_call carrying the provider
+// signature at the TOP LEVEL (thought_signature) rather than nested under
+// extra_content. Gemini via the gateway Chat Completions endpoint uses this shape.
+func toolCallWithTopLevelSignatureJSON() string {
+	return `{"id":"call_1","type":"function","function":{"name":"echo","arguments":"{\"text\":\"hello\"}"},"thought_signature":"` + testThoughtSignature + `"}`
+}
+
+// assertChatContinuationTopLevelSignature verifies the continuation request
+// echoes back the top-level thought_signature verbatim on the assistant tool_call.
+func assertChatContinuationTopLevelSignature(t *testing.T, body []byte) {
+	t.Helper()
+	wire := decodeChatRequest(t, body)
+	for _, message := range wire.Messages {
+		if message.Role == "assistant" && len(message.ToolCalls) > 0 {
+			if got := message.ToolCalls[0].ThoughtSignature; got != testThoughtSignature {
+				t.Fatalf("continuation top-level thought_signature=%q, want %q", got, testThoughtSignature)
+			}
+			return
+		}
+	}
+	t.Fatalf("continuation omitted assistant tool_call: %s", body)
+}
+
 func TestRunChatCompletionPreservesToolCallExtraContent(t *testing.T) {
 	var executed map[string]any
 	transport := &adapterHTTPClient{handle: func(index int, _ *http.Request, body []byte) (string, string) {
@@ -69,6 +92,41 @@ func TestRunChatCompletionPreservesToolCallExtraContent(t *testing.T) {
 	}
 	assertThoughtSignature(t, executed)
 	assertThoughtSignature(t, result.Steps[0].AssistantMessage.ToolCalls[0].ExtraContent)
+}
+
+func TestRunChatCompletionPreservesTopLevelThoughtSignature(t *testing.T) {
+	var executed string
+	transport := &adapterHTTPClient{handle: func(index int, _ *http.Request, body []byte) (string, string) {
+		if index == 0 {
+			return "application/json", `{"id":"first","model":"auto","choices":[{"message":{"role":"assistant","tool_calls":[` + toolCallWithTopLevelSignatureJSON() + `]},"finish_reason":"tool_calls"}]}`
+		}
+		assertChatContinuationTopLevelSignature(t, body)
+		return "application/json", `{"id":"final","model":"auto","choices":[{"message":{"role":"assistant","content":"done"},"finish_reason":"stop"}]}`
+	}}
+	echo := Tool{
+		Name: "echo",
+		Execute: func(_ context.Context, input any, execution ToolExecutionContext) (any, error) {
+			executed = execution.ToolCall.ThoughtSignature
+			return input, nil
+		},
+	}
+	client := NewClient(WithAPIKey("test-key"), WithHTTPClient(transport), WithTools(echo))
+
+	result, err := client.RunChatCompletion(context.Background(), ChatCompletionRequest{
+		Model: ModelAuto, Messages: []ChatMessage{{Role: "user", Content: "echo hello"}},
+	}, RunChatOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.FinalText != "done" || len(transport.requests) != 2 {
+		t.Fatalf("result=%+v requests=%d", result, len(transport.requests))
+	}
+	if executed != testThoughtSignature {
+		t.Fatalf("execution top-level thought_signature=%q, want %q", executed, testThoughtSignature)
+	}
+	if got := result.Steps[0].AssistantMessage.ToolCalls[0].ThoughtSignature; got != testThoughtSignature {
+		t.Fatalf("step top-level thought_signature=%q, want %q", got, testThoughtSignature)
+	}
 }
 
 func TestRunChatCompletionStreamPreservesToolCallExtraContent(t *testing.T) {
