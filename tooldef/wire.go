@@ -34,6 +34,12 @@ type ToolCall struct {
 	ID       string       `json:"id"`
 	Type     string       `json:"type"`
 	Function ToolFunction `json:"function"`
+	// ThoughtSignature is an opaque, provider-specific reasoning token that some
+	// upstreams (notably Gemini via the gateway's Chat Completions endpoint)
+	// return at the top level of the tool_call object. It MUST be echoed back
+	// verbatim on the continuation turn or the provider rejects the request, so
+	// we capture it here rather than dropping it during (de)serialization.
+	ThoughtSignature string `json:"thought_signature,omitempty"`
 	// ExtraContent carries opaque provider metadata that must survive a tool
 	// round trip, such as Gemini's google.thought_signature extension.
 	ExtraContent map[string]any `json:"extra_content,omitempty"`
