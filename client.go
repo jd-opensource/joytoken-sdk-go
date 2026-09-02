@@ -378,6 +378,57 @@ func (c *Client) GenerateImage(ctx context.Context, request ImageGenerationReque
 	return &response, nil
 }
 
+// EditImage edits one or more source images using an OpenAI-compatible request.
+// Prompt and Image are required; Image is a single URL/base64 data URI (string)
+// or multiple of them ([]string). When Model is set it must be ModelAuto.
+func (c *Client) EditImage(ctx context.Context, request ImageEditRequest) (*ImageGenerationResponse, error) {
+	if request.Model != "" {
+		if err := validateAutoModel(request.Model); err != nil {
+			return nil, err
+		}
+	}
+	if request.Prompt == "" {
+		return nil, fmt.Errorf("joytoken: image edit prompt is required")
+	}
+	if !hasImageInput(request.Image) {
+		return nil, fmt.Errorf("joytoken: image edit image is required")
+	}
+	if err := c.requireAPIKey(); err != nil {
+		return nil, err
+	}
+	var response ImageGenerationResponse
+	if err := c.requestJSON(ctx, http.MethodPost, c.openAIBaseURL+"/images/edits", request, &response); err != nil {
+		return nil, err
+	}
+	return &response, nil
+}
+
+// hasImageInput reports whether an ImageEditRequest.Image value carries at least
+// one non-empty image reference. Empty string, empty/whitespace-only entries,
+// empty slices, and nil are treated as missing.
+func hasImageInput(image any) bool {
+	switch v := image.(type) {
+	case string:
+		return strings.TrimSpace(v) != ""
+	case []string:
+		for _, s := range v {
+			if strings.TrimSpace(s) != "" {
+				return true
+			}
+		}
+		return false
+	case []any:
+		for _, item := range v {
+			if s, ok := item.(string); ok && strings.TrimSpace(s) != "" {
+				return true
+			}
+		}
+		return false
+	default:
+		return false
+	}
+}
+
 // ListModels lists the public JoyToken model catalog.
 func (c *Client) ListModels(ctx context.Context) (*ModelListResponse, error) {
 	return c.ListModelsWithOptions(ctx, ListModelsOptions{})

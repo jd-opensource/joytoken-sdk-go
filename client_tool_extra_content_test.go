@@ -246,7 +246,7 @@ func TestRunMessagePreservesTopLevelThoughtSignature(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if result.FinalText != "done" || len(transport.requests) !=2 {
+			if result.FinalText != "done" || len(transport.requests) != 2 {
 				t.Fatalf("result=%+v requests=%d", result, len(transport.requests))
 			}
 			if executed != testThoughtSignature {

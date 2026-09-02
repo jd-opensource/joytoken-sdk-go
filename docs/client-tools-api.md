@@ -33,6 +33,7 @@
 | `CreateResponse` | 原生 Responses 请求 | 仅完全缺省时 | 用户工具透传；默认工具自动闭环 | 保留 |
 | `StreamResponse` | 原生 Responses SSE | 仅完全缺省时 | 否 | 保留 |
 | `GenerateImage` | 图像生成 | 否 | 否 | 保留 |
+| `EditImage` | 图像编辑 | 否 | 否 | 保留 |
 | `CreateMessage` / `StreamMessage` | Anthropic Messages 兼容适配 | 仅完全缺省时 | 用户工具透传；原始流不执行 | 保留 |
 | `ListModels` / `ListModelsWithOptions` | 模型列表 | 否 | 否 | 保留 |
 | `GetModelMeta` / `GetPricing` | 模型元数据/定价 | 否 | 否 | 保留 |

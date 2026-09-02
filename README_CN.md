@@ -57,6 +57,20 @@ if err != nil {
 fmt.Println(image.Data[0].URL)
 ```
 
+编辑已有图片（单个 URL/base64 data URI，或它们的数组）：
+
+```go
+edited, err := client.EditImage(ctx, joytoken.ImageEditRequest{
+    Model:  joytoken.ModelAuto,
+    Prompt: "将背景替换为星空并保持主体不变",
+    Image:  "https://picsum.photos/512/512",
+})
+if err != nil {
+    return err
+}
+fmt.Println(edited.Data[0].B64JSON)
+```
+
 Anthropic Messages：
 
 `CreateMessage` 同样是基于唯一 Chat Completions Gateway 入口的协议适配层。
@@ -77,6 +91,7 @@ message, err := client.CreateMessage(ctx, joytoken.MessageRequest{
 - 基于 SSE 的流式 Chat Completions
 - `POST /openai/v1/responses` 及原生 Responses SSE
 - `POST /openai/v1/images/generations`
+- `POST /openai/v1/images/edits`
 - Anthropic Messages 兼容请求、响应及流式事件适配
 - `GET /api/v1/models`
 - `GET /api/v1/models/meta`
